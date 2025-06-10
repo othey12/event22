@@ -53,8 +53,17 @@ export async function POST(request: NextRequest) {
         const bytes = await ticketDesignFile.arrayBuffer()
         const buffer = Buffer.from(bytes)
         
-        // Create uploads directory if it doesn't exist
-        const uploadsDir = path.join(process.cwd(), 'public', 'uploads')
+        // Create uploads directory if it doesn't exist - use absolute path
+        const publicDir = path.join(process.cwd(), 'public')
+        const uploadsDir = path.join(publicDir, 'uploads')
+        
+        try {
+          await access(publicDir)
+          console.log('📂 Public directory exists')
+        } catch {
+          await mkdir(publicDir, { recursive: true })
+          console.log('📂 Created public directory:', publicDir)
+        }
         
         try {
           await access(uploadsDir)
@@ -64,33 +73,42 @@ export async function POST(request: NextRequest) {
           console.log('📂 Created uploads directory:', uploadsDir)
         }
         
-        // Generate unique filename
+        // Generate unique filename with timestamp
+        const timestamp = Date.now()
         const fileExtension = path.extname(ticketDesignFile.name)
-        const baseFileName = ticketDesignFile.name.replace(fileExtension, '').replace(/[^a-zA-Z0-9.-]/g, '')
-        const filename = `ticket-${Date.now()}-${baseFileName}${fileExtension}`
+        const baseFileName = ticketDesignFile.name.replace(fileExtension, '').replace(/[^a-zA-Z0-9.-]/g, '-')
+        const filename = `ticket-${timestamp}-${baseFileName}${fileExtension}`
         const filepath = path.join(uploadsDir, filename)
         
-        // Write file
+        // Write file with proper error handling
         await writeFile(filepath, buffer)
         console.log('✅ File saved to:', filepath)
         
-        // Verify file was written
+        // Verify file was written and get stats
         try {
           await access(filepath)
-          console.log('✅ File verified to exist at:', filepath)
+          const fs = require('fs')
+          const stats = fs.statSync(filepath)
+          console.log('✅ File verified - size:', stats.size, 'bytes')
         } catch (verifyError) {
           console.error('❌ File verification failed:', verifyError)
-          throw new Error('Failed to save file')
+          throw new Error('Failed to save file properly')
         }
         
         ticketDesignPath = `/uploads/${filename}`
         ticketDesignSize = ticketDesignFile.size
         ticketDesignType = ticketDesignFile.type
 
-        console.log('🖼️ Ticket design saved:', ticketDesignPath)
+        console.log('🖼️ Ticket design saved:', {
+          path: ticketDesignPath,
+          size: ticketDesignSize,
+          type: ticketDesignType
+        })
       } catch (fileError) {
         console.error('❌ File upload error:', fileError)
-        return NextResponse.json({ message: 'Failed to upload ticket design' }, { status: 500 })
+        return NextResponse.json({ 
+          message: 'Failed to upload ticket design: ' + (fileError instanceof Error ? fileError.message : 'Unknown error')
+        }, { status: 500 })
       }
     }
 
@@ -117,13 +135,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Generate tickets
+    // Generate tickets with proper directory creation
     const ticketsDir = path.join(process.cwd(), 'public', 'tickets')
     try {
       await access(ticketsDir)
     } catch {
       await mkdir(ticketsDir, { recursive: true })
+      console.log('📂 Created tickets directory:', ticketsDir)
     }
+    
     console.log('🎫 Generating', quota, 'tickets...')
 
     const serverUrl = process.env.SERVER_URL || 'http://localhost:3000'
@@ -150,6 +170,8 @@ export async function POST(request: NextRequest) {
           'INSERT INTO tickets (event_id, token, qr_code_url, is_verified) VALUES (?, ?, ?, ?)',
           [eventId, token, `/tickets/qr_${token}.png`, false]
         )
+        
+        console.log(`✅ Generated ticket ${i + 1}/${quota}: ${token}`)
       } catch (ticketError) {
         console.error(`⚠️ Failed to generate ticket ${i + 1}:`, ticketError)
         // Continue with other tickets
@@ -178,8 +200,11 @@ export async function GET() {
     // Test database connection first
     const isConnected = await testConnection()
     if (!isConnected) {
+      console.error('❌ Database connection failed in GET /api/events')
       return NextResponse.json({ message: 'Database connection failed' }, { status: 500 })
     }
+
+    console.log('🔍 Fetching all events with statistics...')
 
     const [rows] = await db.execute(`
       SELECT e.*, 
@@ -191,8 +216,21 @@ export async function GET() {
       ORDER BY e.created_at DESC
     `)
     
-    console.log('📊 Fetched', (rows as any[]).length, 'events')
-    return NextResponse.json(rows)
+    const events = rows as any[]
+    console.log('📊 Fetched', events.length, 'events with statistics')
+    
+    // Log sample event for debugging
+    if (events.length > 0) {
+      console.log('📝 Sample event data:', {
+        id: events[0].id,
+        name: events[0].name,
+        total_tickets: events[0].total_tickets,
+        verified_tickets: events[0].verified_tickets,
+        ticket_design: events[0].ticket_design
+      })
+    }
+    
+    return NextResponse.json(events)
   } catch (error) {
     console.error('❌ Error fetching events:', error)
     return NextResponse.json({ 

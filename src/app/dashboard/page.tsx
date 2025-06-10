@@ -8,7 +8,7 @@ async function getDashboardStats() {
     // Test database connection first
     const isConnected = await testConnection()
     if (!isConnected) {
-      console.error('Database connection failed in getDashboardStats')
+      console.error('❌ Database connection failed in getDashboardStats')
       return {
         totalEvents: 0,
         totalParticipants: 0,  
@@ -19,20 +19,20 @@ async function getDashboardStats() {
 
     console.log('🔍 Fetching dashboard statistics...')
 
-    // Get counts with proper error handling
+    // Get counts with proper error handling and explicit queries
     const [eventsResult] = await db.execute('SELECT COUNT(*) as count FROM events')
     const [participantsResult] = await db.execute('SELECT COUNT(*) as count FROM participants')
     const [ticketsResult] = await db.execute('SELECT COUNT(*) as count FROM tickets')
     const [verifiedResult] = await db.execute('SELECT COUNT(*) as count FROM tickets WHERE is_verified = TRUE')
     
     const stats = {
-      totalEvents: (eventsResult as any)[0].count,
-      totalParticipants: (participantsResult as any)[0].count,
-      totalTickets: (ticketsResult as any)[0].count,
-      verifiedTickets: (verifiedResult as any)[0].count,
+      totalEvents: (eventsResult as any)[0].count || 0,
+      totalParticipants: (participantsResult as any)[0].count || 0,
+      totalTickets: (ticketsResult as any)[0].count || 0,
+      verifiedTickets: (verifiedResult as any)[0].count || 0,
     }
 
-    console.log('📊 Dashboard stats:', stats)
+    console.log('📊 Dashboard stats fetched:', stats)
     return stats
   } catch (error) {
     console.error('❌ Error fetching dashboard stats:', error)
@@ -50,26 +50,40 @@ async function getRecentEvents() {
     // Test database connection first
     const isConnected = await testConnection()
     if (!isConnected) {
-      console.error('Database connection failed in getRecentEvents')
+      console.error('❌ Database connection failed in getRecentEvents')
       return []
     }
 
     console.log('🔍 Fetching recent events...')
 
-    // Get ALL events with proper aggregation
+    // Get ALL events with proper aggregation - simplified query for better compatibility
     const [rows] = await db.execute(`
-      SELECT e.id, e.name, e.slug, e.type, e.location, e.description, 
-             e.start_time, e.end_time, e.quota, e.ticket_design, 
-             e.ticket_design_size, e.ticket_design_type, 
-             e.created_at, e.updated_at,
-             COUNT(t.id) as total_tickets,
-             COUNT(CASE WHEN t.is_verified = TRUE THEN 1 END) as verified_tickets
+      SELECT 
+        e.id, 
+        e.name, 
+        e.slug, 
+        e.type, 
+        e.location, 
+        e.description, 
+        e.start_time, 
+        e.end_time, 
+        e.quota, 
+        e.ticket_design, 
+        e.ticket_design_size, 
+        e.ticket_design_type, 
+        e.created_at, 
+        e.updated_at,
+        COALESCE(ticket_stats.total_tickets, 0) as total_tickets,
+        COALESCE(ticket_stats.verified_tickets, 0) as verified_tickets
       FROM events e
-      LEFT JOIN tickets t ON e.id = t.event_id
-      GROUP BY e.id, e.name, e.slug, e.type, e.location, e.description, 
-               e.start_time, e.end_time, e.quota, e.ticket_design, 
-               e.ticket_design_size, e.ticket_design_type, 
-               e.created_at, e.updated_at
+      LEFT JOIN (
+        SELECT 
+          event_id,
+          COUNT(*) as total_tickets,
+          SUM(CASE WHEN is_verified = TRUE THEN 1 ELSE 0 END) as verified_tickets
+        FROM tickets 
+        GROUP BY event_id
+      ) ticket_stats ON e.id = ticket_stats.event_id
       ORDER BY e.created_at DESC
     `)
     
@@ -82,7 +96,8 @@ async function getRecentEvents() {
         id: events[0].id,
         name: events[0].name,
         total_tickets: events[0].total_tickets,
-        verified_tickets: events[0].verified_tickets
+        verified_tickets: events[0].verified_tickets,
+        ticket_design: events[0].ticket_design
       })
     }
     

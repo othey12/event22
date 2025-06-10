@@ -100,8 +100,17 @@ export async function PUT(
         const bytes = await ticketDesignFile.arrayBuffer()
         const buffer = Buffer.from(bytes)
         
-        // Create uploads directory if it doesn't exist
-        const uploadsDir = path.join(process.cwd(), 'public', 'uploads')
+        // Create uploads directory if it doesn't exist - use absolute path
+        const publicDir = path.join(process.cwd(), 'public')
+        const uploadsDir = path.join(publicDir, 'uploads')
+        
+        try {
+          await access(publicDir)
+          console.log('📂 Public directory exists')
+        } catch {
+          await mkdir(publicDir, { recursive: true })
+          console.log('📂 Created public directory:', publicDir)
+        }
         
         try {
           await access(uploadsDir)
@@ -111,30 +120,37 @@ export async function PUT(
           console.log('📂 Created uploads directory:', uploadsDir)
         }
         
-        // Generate unique filename
+        // Generate unique filename with timestamp
+        const timestamp = Date.now()
         const fileExtension = path.extname(ticketDesignFile.name)
-        const baseFileName = ticketDesignFile.name.replace(fileExtension, '').replace(/[^a-zA-Z0-9.-]/g, '')
-        const filename = `ticket-${Date.now()}-${baseFileName}${fileExtension}`
+        const baseFileName = ticketDesignFile.name.replace(fileExtension, '').replace(/[^a-zA-Z0-9.-]/g, '-')
+        const filename = `ticket-${timestamp}-${baseFileName}${fileExtension}`
         const filepath = path.join(uploadsDir, filename)
         
-        // Write file
+        // Write file with proper error handling
         await writeFile(filepath, buffer)
         console.log('✅ File saved to:', filepath)
         
-        // Verify file was written
+        // Verify file was written and get stats
         try {
           await access(filepath)
-          console.log('✅ File verified to exist at:', filepath)
+          const fs = require('fs')
+          const stats = fs.statSync(filepath)
+          console.log('✅ File verified - size:', stats.size, 'bytes')
         } catch (verifyError) {
           console.error('❌ File verification failed:', verifyError)
-          throw new Error('Failed to save file')
+          throw new Error('Failed to save file properly')
         }
         
         ticketDesignPath = `/uploads/${filename}`
         ticketDesignSize = ticketDesignFile.size
         ticketDesignType = ticketDesignFile.type
 
-        console.log('🖼️ New ticket design saved:', ticketDesignPath)
+        console.log('🖼️ New ticket design saved:', {
+          path: ticketDesignPath,
+          size: ticketDesignSize,
+          type: ticketDesignType
+        })
 
         // Track file upload in database
         try {
@@ -155,7 +171,9 @@ export async function PUT(
         )
       } catch (fileError) {
         console.error('❌ File upload error:', fileError)
-        return NextResponse.json({ message: 'Failed to upload ticket design' }, { status: 500 })
+        return NextResponse.json({ 
+          message: 'Failed to upload ticket design: ' + (fileError instanceof Error ? fileError.message : 'Unknown error')
+        }, { status: 500 })
       }
     } else {
       // Update event without changing file
@@ -170,7 +188,9 @@ export async function PUT(
     return NextResponse.json({ message: 'Event updated successfully' })
   } catch (error) {
     console.error('❌ Error updating event:', error)
-    return NextResponse.json({ message: 'Internal server error' }, { status: 500 })
+    return NextResponse.json({ 
+      message: 'Internal server error: ' + (error instanceof Error ? error.message : 'Unknown error')
+    }, { status: 500 })
   }
 }
 

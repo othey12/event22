@@ -58,10 +58,22 @@ export async function initializeDatabase(): Promise<boolean> {
     } else {
       console.log('✅ Database tables exist');
       
-      // Check if we have sample data
+      // Check if we have sample data and log detailed stats
       const [eventCount] = await connection.execute('SELECT COUNT(*) as count FROM events');
+      const [ticketCount] = await connection.execute('SELECT COUNT(*) as count FROM tickets');
+      const [participantCount] = await connection.execute('SELECT COUNT(*) as count FROM participants');
+      const [verifiedCount] = await connection.execute('SELECT COUNT(*) as count FROM tickets WHERE is_verified = TRUE');
+      
       const eventCountResult = eventCount as mysql.RowDataPacket[];
-      console.log(`📊 Found ${eventCountResult[0].count} events in database`);
+      const ticketCountResult = ticketCount as mysql.RowDataPacket[];
+      const participantCountResult = participantCount as mysql.RowDataPacket[];
+      const verifiedCountResult = verifiedCount as mysql.RowDataPacket[];
+      
+      console.log(`📊 Database Statistics:
+        - Events: ${eventCountResult[0].count}
+        - Tickets: ${ticketCountResult[0].count}
+        - Participants: ${participantCountResult[0].count}
+        - Verified Tickets: ${verifiedCountResult[0].count}`);
     }
 
     return true;
