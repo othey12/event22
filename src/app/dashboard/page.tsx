@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { Calendar, Users, Award, BarChart3, Plus, Eye, Ticket } from 'lucide-react'
 import db, { testConnection } from '@/lib/db'
+import { formatDateTime } from '@/lib/utils'
 
 async function getDashboardStats() {
   try {
@@ -45,15 +46,15 @@ async function getRecentEvents() {
       return []
     }
 
+    // Get ALL events, not just 5
     const [rows] = await db.execute(`
       SELECT e.*, 
              COUNT(t.id) as total_tickets,
              COUNT(CASE WHEN t.is_verified = TRUE THEN 1 END) as verified_tickets
       FROM events e
       LEFT JOIN tickets t ON e.id = t.event_id
-      GROUP BY e.id
+      GROUP BY e.id, e.name, e.slug, e.type, e.location, e.description, e.start_time, e.end_time, e.quota, e.ticket_design, e.ticket_design_size, e.ticket_design_type, e.created_at, e.updated_at
       ORDER BY e.created_at DESC
-      LIMIT 5
     `)
     return rows as any[]
   } catch (error) {
@@ -104,6 +105,7 @@ export default async function DashboardPage() {
               <div>
                 <p className="text-gray-500 text-sm font-medium">Total Events</p>
                 <p className="text-3xl font-bold text-gray-900">{stats.totalEvents}</p>
+                <p className="text-sm text-blue-600 mt-1">All created events</p>
               </div>
               <div className="bg-blue-100 p-3 rounded-lg">
                 <Calendar className="h-6 w-6 text-blue-600" />
@@ -116,6 +118,7 @@ export default async function DashboardPage() {
               <div>
                 <p className="text-gray-500 text-sm font-medium">Total Participants</p>
                 <p className="text-3xl font-bold text-gray-900">{stats.totalParticipants}</p>
+                <p className="text-sm text-green-600 mt-1">Registered users</p>
               </div>
               <div className="bg-green-100 p-3 rounded-lg">
                 <Users className="h-6 w-6 text-green-600" />
@@ -128,6 +131,7 @@ export default async function DashboardPage() {
               <div>
                 <p className="text-gray-500 text-sm font-medium">Total Tickets</p>
                 <p className="text-3xl font-bold text-gray-900">{stats.totalTickets}</p>
+                <p className="text-sm text-orange-600 mt-1">Generated tickets</p>
               </div>
               <div className="bg-orange-100 p-3 rounded-lg">
                 <Ticket className="h-6 w-6 text-orange-600" />
@@ -140,6 +144,7 @@ export default async function DashboardPage() {
               <div>
                 <p className="text-gray-500 text-sm font-medium">Verified Tickets</p>
                 <p className="text-3xl font-bold text-gray-900">{stats.verifiedTickets}</p>
+                <p className="text-sm text-purple-600 mt-1">Used tickets</p>
               </div>
               <div className="bg-purple-100 p-3 rounded-lg">
                 <Award className="h-6 w-6 text-purple-600" />
@@ -175,12 +180,12 @@ export default async function DashboardPage() {
           </Link>
         </div>
 
-        {/* Recent Events */}
+        {/* All Events */}
         <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-semibold text-gray-900">Recent Events</h3>
+            <h3 className="text-xl font-semibold text-gray-900">All Events ({recentEvents.length})</h3>
             <Link href="/dashboard/events" className="text-blue-600 hover:text-blue-700 font-medium flex items-center space-x-1">
-              <span>View All</span>
+              <span>Manage All</span>
               <Eye className="h-4 w-4" />
             </Link>
           </div>
@@ -193,17 +198,31 @@ export default async function DashboardPage() {
                     <div className={`p-2 rounded-lg ${event.type === 'Seminar' ? 'bg-blue-100' : 'bg-green-100'}`}>
                       <Calendar className={`h-5 w-5 ${event.type === 'Seminar' ? 'text-blue-600' : 'text-green-600'}`} />
                     </div>
+                    {event.ticket_design && (
+                      <img 
+                        src={event.ticket_design} 
+                        alt="Ticket Design" 
+                        className="w-12 h-8 object-cover rounded border border-gray-200"
+                      />
+                    )}
                     <div>
                       <h4 className="font-semibold text-gray-900">{event.name}</h4>
                       <p className="text-sm text-gray-500">{event.type} • {event.location}</p>
+                      <p className="text-xs text-gray-400">{formatDateTime(event.start_time)}</p>
                     </div>
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-medium text-gray-900">
-                      {event.verified_tickets}/{event.total_tickets} Registered
+                      {event.verified_tickets || 0}/{event.total_tickets || 0} Registered
                     </p>
-                    <p className="text-xs text-gray-500">
-                      {new Date(event.start_time).toLocaleDateString()}
+                    <div className="w-24 bg-gray-200 rounded-full h-2 mt-1">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                        style={{ width: `${Math.round(((event.verified_tickets || 0) / (event.total_tickets || 1)) * 100)}%` }}
+                      ></div>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {Math.round(((event.verified_tickets || 0) / (event.total_tickets || 1)) * 100)}% filled
                     </p>
                   </div>
                 </div>

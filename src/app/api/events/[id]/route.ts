@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { writeFile, mkdir } from 'fs/promises'
+import path from 'path'
 import db, { testConnection } from '@/lib/db'
 
 export async function GET(
@@ -68,6 +70,9 @@ export async function PUT(
     const startTime = formData.get('startTime') as string
     const endTime = formData.get('endTime') as string
     const quota = parseInt(formData.get('quota') as string)
+    const ticketDesignFile = formData.get('ticketDesign') as File | null
+
+    console.log('📝 Updating event:', eventId, { name, slug, type, location, quota })
 
     if (!name || !slug || !type || !location || !startTime || !endTime || !quota) {
       return NextResponse.json({ message: 'Missing required fields' }, { status: 400 })
@@ -83,15 +88,56 @@ export async function PUT(
       return NextResponse.json({ message: 'Slug already exists. Please use a different slug.' }, { status: 400 })
     }
 
-    // Update event
-    await db.execute(
-      'UPDATE events SET name = ?, slug = ?, type = ?, location = ?, description = ?, start_time = ?, end_time = ?, quota = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [name, slug, type, location, description, startTime, endTime, quota, eventId]
-    )
+    // Handle ticket design upload if new file provided
+    let ticketDesignPath = null
+    let ticketDesignSize = null
+    let ticketDesignType = null
+    
+    if (ticketDesignFile && ticketDesignFile.size > 0) {
+      console.log('📁 Processing file upload:', ticketDesignFile.name, ticketDesignFile.size)
+      
+      const bytes = await ticketDesignFile.arrayBuffer()
+      const buffer = Buffer.from(bytes)
+      
+      // Create uploads directory if it doesn't exist
+      const uploadsDir = path.join(process.cwd(), 'public', 'uploads')
+      await mkdir(uploadsDir, { recursive: true })
+      
+      const filename = `ticket-${Date.now()}-${ticketDesignFile.name.replace(/[^a-zA-Z0-9.-]/g, '')}`
+      const filepath = path.join(uploadsDir, filename)
+      await writeFile(filepath, buffer)
+      console.log('✅ File saved to:', filepath)
+      
+      ticketDesignPath = `/uploads/${filename}`
+      ticketDesignSize = ticketDesignFile.size
+      ticketDesignType = ticketDesignFile.type
+
+      console.log('🖼️ New ticket design saved:', ticketDesignPath)
+
+      // Track file upload in database
+      await db.execute(
+        'INSERT INTO file_uploads (filename, original_name, file_path, file_size, file_type, upload_type, related_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [filename, ticketDesignFile.name, ticketDesignPath, ticketDesignSize, ticketDesignType, 'ticket_design', eventId]
+      )
+
+      // Update event with new file
+      await db.execute(
+        'UPDATE events SET name = ?, slug = ?, type = ?, location = ?, description = ?, start_time = ?, end_time = ?, quota = ?, ticket_design = ?, ticket_design_size = ?, ticket_design_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [name, slug, type, location, description, startTime, endTime, quota, ticketDesignPath, ticketDesignSize, ticketDesignType, eventId]
+      )
+    } else {
+      // Update event without changing file
+      await db.execute(
+        'UPDATE events SET name = ?, slug = ?, type = ?, location = ?, description = ?, start_time = ?, end_time = ?, quota = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [name, slug, type, location, description, startTime, endTime, quota, eventId]
+      )
+    }
+
+    console.log('✅ Event updated successfully')
 
     return NextResponse.json({ message: 'Event updated successfully' })
   } catch (error) {
-    console.error('Error updating event:', error)
+    console.error('❌ Error updating event:', error)
     return NextResponse.json({ message: 'Internal server error' }, { status: 500 })
   }
 }
@@ -119,20 +165,21 @@ export async function DELETE(
     if (event.ticket_design) {
       try {
         const fs = require('fs').promises
-        const path = require('path')
         const filePath = path.join(process.cwd(), 'public', event.ticket_design)
         await fs.unlink(filePath)
+        console.log('🗑️ Deleted file:', filePath)
       } catch (fileError) {
-        console.error('Error deleting file:', fileError)
+        console.error('⚠️ Error deleting file:', fileError)
       }
     }
 
     // Delete event (cascade will handle tickets, participants, certificates)
     await db.execute('DELETE FROM events WHERE id = ?', [eventId])
+    console.log('🗑️ Event deleted:', eventId)
 
     return NextResponse.json({ message: 'Event deleted successfully' })
   } catch (error) {
-    console.error('Error deleting event:', error)
+    console.error('❌ Error deleting event:', error)
     return NextResponse.json({ message: 'Internal server error' }, { status: 500 })
   }
 }

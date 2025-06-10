@@ -25,6 +25,8 @@ export async function POST(request: NextRequest) {
     const quota = parseInt(formData.get('quota') as string)
     const ticketDesignFile = formData.get('ticketDesign') as File | null
 
+    console.log('📝 Creating event:', { name, slug, type, location, quota })
+
     if (!name || !slug || !type || !location || !startTime || !endTime || !quota) {
       return NextResponse.json({ message: 'Missing required fields' }, { status: 400 })
     }
@@ -45,20 +47,26 @@ export async function POST(request: NextRequest) {
     let ticketDesignType = null
     
     if (ticketDesignFile && ticketDesignFile.size > 0) {
+      console.log('📁 Processing file upload:', ticketDesignFile.name, ticketDesignFile.size)
+      
       const bytes = await ticketDesignFile.arrayBuffer()
       const buffer = Buffer.from(bytes)
       
       // Create uploads directory if it doesn't exist
       const uploadsDir = path.join(process.cwd(), 'public', 'uploads')
       await mkdir(uploadsDir, { recursive: true })
+      console.log('📂 Created uploads directory:', uploadsDir)
       
-      const filename = `ticket-${Date.now()}-${ticketDesignFile.name}`
+      const filename = `ticket-${Date.now()}-${ticketDesignFile.name.replace(/[^a-zA-Z0-9.-]/g, '')}`
       const filepath = path.join(uploadsDir, filename)
       await writeFile(filepath, buffer)
+      console.log('✅ File saved to:', filepath)
       
       ticketDesignPath = `/uploads/${filename}`
       ticketDesignSize = ticketDesignFile.size
       ticketDesignType = ticketDesignFile.type
+
+      console.log('🖼️ Ticket design saved:', ticketDesignPath)
 
       // Track file upload in database
       await db.execute(
@@ -74,6 +82,7 @@ export async function POST(request: NextRequest) {
     )
 
     const eventId = (result as any).insertId
+    console.log('🎉 Event created with ID:', eventId)
 
     // Update file upload with event ID
     if (ticketDesignPath) {
@@ -86,6 +95,7 @@ export async function POST(request: NextRequest) {
     // Generate tickets
     const ticketsDir = path.join(process.cwd(), 'public', 'tickets')
     await mkdir(ticketsDir, { recursive: true })
+    console.log('🎫 Generating', quota, 'tickets...')
 
     for (let i = 0; i < quota; i++) {
       const token = uuidv4().replace(/-/g, '').substring(0, 12).toUpperCase()
@@ -103,13 +113,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    console.log('✅ Event creation completed successfully')
+
     return NextResponse.json({ 
       message: 'Event created successfully',
       eventId: eventId,
-      ticketsGenerated: quota
+      ticketsGenerated: quota,
+      ticketDesign: ticketDesignPath
     })
   } catch (error) {
-    console.error('Error creating event:', error)
+    console.error('❌ Error creating event:', error)
     return NextResponse.json({ 
       message: 'Internal server error', 
       error: error instanceof Error ? error.message : 'Unknown error'
@@ -131,13 +144,14 @@ export async function GET() {
              COUNT(CASE WHEN t.is_verified = TRUE THEN 1 END) as verified_tickets
       FROM events e
       LEFT JOIN tickets t ON e.id = t.event_id
-      GROUP BY e.id
+      GROUP BY e.id, e.name, e.slug, e.type, e.location, e.description, e.start_time, e.end_time, e.quota, e.ticket_design, e.ticket_design_size, e.ticket_design_type, e.created_at, e.updated_at
       ORDER BY e.created_at DESC
     `)
     
+    console.log('📊 Fetched', (rows as any[]).length, 'events')
     return NextResponse.json(rows)
   } catch (error) {
-    console.error('Error fetching events:', error)
+    console.error('❌ Error fetching events:', error)
     return NextResponse.json({ 
       message: 'Internal server error',
       error: error instanceof Error ? error.message : 'Unknown error'
@@ -172,17 +186,19 @@ export async function DELETE(request: NextRequest) {
         const fs = require('fs').promises
         const filePath = path.join(process.cwd(), 'public', event.ticket_design)
         await fs.unlink(filePath)
+        console.log('🗑️ Deleted file:', filePath)
       } catch (fileError) {
-        console.error('Error deleting file:', fileError)
+        console.error('⚠️ Error deleting file:', fileError)
       }
     }
 
     // Delete event (cascade will handle tickets, participants, certificates)
     await db.execute('DELETE FROM events WHERE id = ?', [eventId])
+    console.log('🗑️ Event deleted:', eventId)
 
     return NextResponse.json({ message: 'Event deleted successfully' })
   } catch (error) {
-    console.error('Error deleting event:', error)
+    console.error('❌ Error deleting event:', error)
     return NextResponse.json({ message: 'Internal server error' }, { status: 500 })
   }
 }
