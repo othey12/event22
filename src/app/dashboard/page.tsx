@@ -8,6 +8,7 @@ async function getDashboardStats() {
     // Test database connection first
     const isConnected = await testConnection()
     if (!isConnected) {
+      console.error('Database connection failed in getDashboardStats')
       return {
         totalEvents: 0,
         totalParticipants: 0,  
@@ -16,19 +17,25 @@ async function getDashboardStats() {
       }
     }
 
+    console.log('🔍 Fetching dashboard statistics...')
+
+    // Get counts with proper error handling
     const [eventsResult] = await db.execute('SELECT COUNT(*) as count FROM events')
     const [participantsResult] = await db.execute('SELECT COUNT(*) as count FROM participants')
     const [ticketsResult] = await db.execute('SELECT COUNT(*) as count FROM tickets')
     const [verifiedResult] = await db.execute('SELECT COUNT(*) as count FROM tickets WHERE is_verified = TRUE')
     
-    return {
+    const stats = {
       totalEvents: (eventsResult as any)[0].count,
       totalParticipants: (participantsResult as any)[0].count,
       totalTickets: (ticketsResult as any)[0].count,
       verifiedTickets: (verifiedResult as any)[0].count,
     }
+
+    console.log('📊 Dashboard stats:', stats)
+    return stats
   } catch (error) {
-    console.error('Error fetching dashboard stats:', error)
+    console.error('❌ Error fetching dashboard stats:', error)
     return {
       totalEvents: 0,
       totalParticipants: 0,  
@@ -43,29 +50,59 @@ async function getRecentEvents() {
     // Test database connection first
     const isConnected = await testConnection()
     if (!isConnected) {
+      console.error('Database connection failed in getRecentEvents')
       return []
     }
 
-    // Get ALL events, not just 5
+    console.log('🔍 Fetching recent events...')
+
+    // Get ALL events with proper aggregation
     const [rows] = await db.execute(`
-      SELECT e.*, 
+      SELECT e.id, e.name, e.slug, e.type, e.location, e.description, 
+             e.start_time, e.end_time, e.quota, e.ticket_design, 
+             e.ticket_design_size, e.ticket_design_type, 
+             e.created_at, e.updated_at,
              COUNT(t.id) as total_tickets,
              COUNT(CASE WHEN t.is_verified = TRUE THEN 1 END) as verified_tickets
       FROM events e
       LEFT JOIN tickets t ON e.id = t.event_id
-      GROUP BY e.id, e.name, e.slug, e.type, e.location, e.description, e.start_time, e.end_time, e.quota, e.ticket_design, e.ticket_design_size, e.ticket_design_type, e.created_at, e.updated_at
+      GROUP BY e.id, e.name, e.slug, e.type, e.location, e.description, 
+               e.start_time, e.end_time, e.quota, e.ticket_design, 
+               e.ticket_design_size, e.ticket_design_type, 
+               e.created_at, e.updated_at
       ORDER BY e.created_at DESC
     `)
-    return rows as any[]
+    
+    const events = rows as any[]
+    console.log(`📊 Found ${events.length} events`)
+    
+    // Log first event for debugging
+    if (events.length > 0) {
+      console.log('📝 Sample event:', {
+        id: events[0].id,
+        name: events[0].name,
+        total_tickets: events[0].total_tickets,
+        verified_tickets: events[0].verified_tickets
+      })
+    }
+    
+    return events
   } catch (error) {
-    console.error('Error fetching recent events:', error)
+    console.error('❌ Error fetching recent events:', error)
     return []
   }
 }
 
 export default async function DashboardPage() {
+  console.log('🚀 Loading dashboard page...')
+  
   const stats = await getDashboardStats()
   const recentEvents = await getRecentEvents()
+
+  console.log('📊 Final dashboard data:', {
+    stats,
+    eventsCount: recentEvents.length
+  })
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
@@ -203,6 +240,10 @@ export default async function DashboardPage() {
                         src={event.ticket_design} 
                         alt="Ticket Design" 
                         className="w-12 h-8 object-cover rounded border border-gray-200"
+                        onError={(e) => {
+                          console.log('Image failed to load:', event.ticket_design)
+                          e.currentTarget.style.display = 'none'
+                        }}
                       />
                     )}
                     <div>
@@ -218,11 +259,11 @@ export default async function DashboardPage() {
                     <div className="w-24 bg-gray-200 rounded-full h-2 mt-1">
                       <div 
                         className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
-                        style={{ width: `${Math.round(((event.verified_tickets || 0) / (event.total_tickets || 1)) * 100)}%` }}
+                        style={{ width: `${Math.round(((event.verified_tickets || 0) / Math.max(event.total_tickets || 1, 1)) * 100)}%` }}
                       ></div>
                     </div>
                     <p className="text-xs text-gray-500 mt-1">
-                      {Math.round(((event.verified_tickets || 0) / (event.total_tickets || 1)) * 100)}% filled
+                      {Math.round(((event.verified_tickets || 0) / Math.max(event.total_tickets || 1, 1)) * 100)}% filled
                     </p>
                   </div>
                 </div>

@@ -16,6 +16,8 @@ const pool = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0,
   connectTimeout: 60000,
+  acquireTimeout: 60000,
+  timeout: 60000,
   charset: 'utf8mb4'
 } as DBConfig);
 
@@ -43,19 +45,23 @@ export async function initializeDatabase(): Promise<boolean> {
   try {
     connection = await pool.getConnection();
 
-    // Corrected execute syntax without type argument
+    // Check if tables exist
     const [rows] = await connection.execute(
       "SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = ? AND table_name = 'events'",
       [process.env.DB_NAME || 'event_management']
     );
 
-    // Type assertion for the rows
     const tables = rows as mysql.RowDataPacket[];
     
     if (tables.length === 0) {
       console.log('⚠️ Tables not found, please ensure database is initialized');
     } else {
       console.log('✅ Database tables exist');
+      
+      // Check if we have sample data
+      const [eventCount] = await connection.execute('SELECT COUNT(*) as count FROM events');
+      const eventCountResult = eventCount as mysql.RowDataPacket[];
+      console.log(`📊 Found ${eventCountResult[0].count} events in database`);
     }
 
     return true;

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFile, mkdir } from 'fs/promises'
+import { writeFile, mkdir, access } from 'fs/promises'
 import path from 'path'
 import db, { testConnection } from '@/lib/db'
 
@@ -96,35 +96,67 @@ export async function PUT(
     if (ticketDesignFile && ticketDesignFile.size > 0) {
       console.log('📁 Processing file upload:', ticketDesignFile.name, ticketDesignFile.size)
       
-      const bytes = await ticketDesignFile.arrayBuffer()
-      const buffer = Buffer.from(bytes)
-      
-      // Create uploads directory if it doesn't exist
-      const uploadsDir = path.join(process.cwd(), 'public', 'uploads')
-      await mkdir(uploadsDir, { recursive: true })
-      
-      const filename = `ticket-${Date.now()}-${ticketDesignFile.name.replace(/[^a-zA-Z0-9.-]/g, '')}`
-      const filepath = path.join(uploadsDir, filename)
-      await writeFile(filepath, buffer)
-      console.log('✅ File saved to:', filepath)
-      
-      ticketDesignPath = `/uploads/${filename}`
-      ticketDesignSize = ticketDesignFile.size
-      ticketDesignType = ticketDesignFile.type
+      try {
+        const bytes = await ticketDesignFile.arrayBuffer()
+        const buffer = Buffer.from(bytes)
+        
+        // Create uploads directory if it doesn't exist
+        const uploadsDir = path.join(process.cwd(), 'public', 'uploads')
+        
+        try {
+          await access(uploadsDir)
+          console.log('📂 Uploads directory exists')
+        } catch {
+          await mkdir(uploadsDir, { recursive: true })
+          console.log('📂 Created uploads directory:', uploadsDir)
+        }
+        
+        // Generate unique filename
+        const fileExtension = path.extname(ticketDesignFile.name)
+        const baseFileName = ticketDesignFile.name.replace(fileExtension, '').replace(/[^a-zA-Z0-9.-]/g, '')
+        const filename = `ticket-${Date.now()}-${baseFileName}${fileExtension}`
+        const filepath = path.join(uploadsDir, filename)
+        
+        // Write file
+        await writeFile(filepath, buffer)
+        console.log('✅ File saved to:', filepath)
+        
+        // Verify file was written
+        try {
+          await access(filepath)
+          console.log('✅ File verified to exist at:', filepath)
+        } catch (verifyError) {
+          console.error('❌ File verification failed:', verifyError)
+          throw new Error('Failed to save file')
+        }
+        
+        ticketDesignPath = `/uploads/${filename}`
+        ticketDesignSize = ticketDesignFile.size
+        ticketDesignType = ticketDesignFile.type
 
-      console.log('🖼️ New ticket design saved:', ticketDesignPath)
+        console.log('🖼️ New ticket design saved:', ticketDesignPath)
 
-      // Track file upload in database
-      await db.execute(
-        'INSERT INTO file_uploads (filename, original_name, file_path, file_size, file_type, upload_type, related_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [filename, ticketDesignFile.name, ticketDesignPath, ticketDesignSize, ticketDesignType, 'ticket_design', eventId]
-      )
+        // Track file upload in database
+        try {
+          await db.execute(
+            'INSERT INTO file_uploads (filename, original_name, file_path, file_size, file_type, upload_type, related_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [filename, ticketDesignFile.name, ticketDesignPath, ticketDesignSize, ticketDesignType, 'ticket_design', eventId]
+          )
+          console.log('📝 File upload tracked in database')
+        } catch (dbError) {
+          console.error('⚠️ Failed to track file upload in database:', dbError)
+          // Don't fail the entire operation for this
+        }
 
-      // Update event with new file
-      await db.execute(
-        'UPDATE events SET name = ?, slug = ?, type = ?, location = ?, description = ?, start_time = ?, end_time = ?, quota = ?, ticket_design = ?, ticket_design_size = ?, ticket_design_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        [name, slug, type, location, description, startTime, endTime, quota, ticketDesignPath, ticketDesignSize, ticketDesignType, eventId]
-      )
+        // Update event with new file
+        await db.execute(
+          'UPDATE events SET name = ?, slug = ?, type = ?, location = ?, description = ?, start_time = ?, end_time = ?, quota = ?, ticket_design = ?, ticket_design_size = ?, ticket_design_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          [name, slug, type, location, description, startTime, endTime, quota, ticketDesignPath, ticketDesignSize, ticketDesignType, eventId]
+        )
+      } catch (fileError) {
+        console.error('❌ File upload error:', fileError)
+        return NextResponse.json({ message: 'Failed to upload ticket design' }, { status: 500 })
+      }
     } else {
       // Update event without changing file
       await db.execute(

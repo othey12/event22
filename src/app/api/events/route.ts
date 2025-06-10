@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFile, mkdir } from 'fs/promises'
+import { writeFile, mkdir, access } from 'fs/promises'
 import path from 'path'
 import { v4 as uuidv4 } from 'uuid'
 import QRCode from 'qrcode'
@@ -49,30 +49,49 @@ export async function POST(request: NextRequest) {
     if (ticketDesignFile && ticketDesignFile.size > 0) {
       console.log('📁 Processing file upload:', ticketDesignFile.name, ticketDesignFile.size)
       
-      const bytes = await ticketDesignFile.arrayBuffer()
-      const buffer = Buffer.from(bytes)
-      
-      // Create uploads directory if it doesn't exist
-      const uploadsDir = path.join(process.cwd(), 'public', 'uploads')
-      await mkdir(uploadsDir, { recursive: true })
-      console.log('📂 Created uploads directory:', uploadsDir)
-      
-      const filename = `ticket-${Date.now()}-${ticketDesignFile.name.replace(/[^a-zA-Z0-9.-]/g, '')}`
-      const filepath = path.join(uploadsDir, filename)
-      await writeFile(filepath, buffer)
-      console.log('✅ File saved to:', filepath)
-      
-      ticketDesignPath = `/uploads/${filename}`
-      ticketDesignSize = ticketDesignFile.size
-      ticketDesignType = ticketDesignFile.type
+      try {
+        const bytes = await ticketDesignFile.arrayBuffer()
+        const buffer = Buffer.from(bytes)
+        
+        // Create uploads directory if it doesn't exist
+        const uploadsDir = path.join(process.cwd(), 'public', 'uploads')
+        
+        try {
+          await access(uploadsDir)
+          console.log('📂 Uploads directory exists')
+        } catch {
+          await mkdir(uploadsDir, { recursive: true })
+          console.log('📂 Created uploads directory:', uploadsDir)
+        }
+        
+        // Generate unique filename
+        const fileExtension = path.extname(ticketDesignFile.name)
+        const baseFileName = ticketDesignFile.name.replace(fileExtension, '').replace(/[^a-zA-Z0-9.-]/g, '')
+        const filename = `ticket-${Date.now()}-${baseFileName}${fileExtension}`
+        const filepath = path.join(uploadsDir, filename)
+        
+        // Write file
+        await writeFile(filepath, buffer)
+        console.log('✅ File saved to:', filepath)
+        
+        // Verify file was written
+        try {
+          await access(filepath)
+          console.log('✅ File verified to exist at:', filepath)
+        } catch (verifyError) {
+          console.error('❌ File verification failed:', verifyError)
+          throw new Error('Failed to save file')
+        }
+        
+        ticketDesignPath = `/uploads/${filename}`
+        ticketDesignSize = ticketDesignFile.size
+        ticketDesignType = ticketDesignFile.type
 
-      console.log('🖼️ Ticket design saved:', ticketDesignPath)
-
-      // Track file upload in database
-      await db.execute(
-        'INSERT INTO file_uploads (filename, original_name, file_path, file_size, file_type, upload_type, related_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [filename, ticketDesignFile.name, ticketDesignPath, ticketDesignSize, ticketDesignType, 'ticket_design', null]
-      )
+        console.log('🖼️ Ticket design saved:', ticketDesignPath)
+      } catch (fileError) {
+        console.error('❌ File upload error:', fileError)
+        return NextResponse.json({ message: 'Failed to upload ticket design' }, { status: 500 })
+      }
     }
 
     // Insert event into database
@@ -84,33 +103,57 @@ export async function POST(request: NextRequest) {
     const eventId = (result as any).insertId
     console.log('🎉 Event created with ID:', eventId)
 
-    // Update file upload with event ID
+    // Track file upload in database if file was uploaded
     if (ticketDesignPath) {
-      await db.execute(
-        'UPDATE file_uploads SET related_id = ? WHERE file_path = ? AND upload_type = ?',
-        [eventId, ticketDesignPath, 'ticket_design']
-      )
+      try {
+        await db.execute(
+          'INSERT INTO file_uploads (filename, original_name, file_path, file_size, file_type, upload_type, related_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [path.basename(ticketDesignPath), ticketDesignFile!.name, ticketDesignPath, ticketDesignSize, ticketDesignType, 'ticket_design', eventId]
+        )
+        console.log('📝 File upload tracked in database')
+      } catch (dbError) {
+        console.error('⚠️ Failed to track file upload in database:', dbError)
+        // Don't fail the entire operation for this
+      }
     }
 
     // Generate tickets
     const ticketsDir = path.join(process.cwd(), 'public', 'tickets')
-    await mkdir(ticketsDir, { recursive: true })
+    try {
+      await access(ticketsDir)
+    } catch {
+      await mkdir(ticketsDir, { recursive: true })
+    }
     console.log('🎫 Generating', quota, 'tickets...')
+
+    const serverUrl = process.env.SERVER_URL || 'http://localhost:3000'
 
     for (let i = 0; i < quota; i++) {
       const token = uuidv4().replace(/-/g, '').substring(0, 12).toUpperCase()
-      const registrationUrl = `${process.env.SERVER_URL || 'http://localhost:3000'}/register?token=${token}`
+      const registrationUrl = `${serverUrl}/register?token=${token}`
       
-      // Generate QR code
-      const qrCodeBuffer = await QRCode.toBuffer(registrationUrl)
-      const qrCodePath = path.join(ticketsDir, `qr_${token}.png`)
-      await writeFile(qrCodePath, qrCodeBuffer)
-      
-      // Insert ticket into database
-      await db.execute(
-        'INSERT INTO tickets (event_id, token, qr_code_url, is_verified) VALUES (?, ?, ?, ?)',
-        [eventId, token, `/tickets/qr_${token}.png`, false]
-      )
+      try {
+        // Generate QR code
+        const qrCodeBuffer = await QRCode.toBuffer(registrationUrl, {
+          width: 200,
+          margin: 2,
+          color: {
+            dark: '#000000',
+            light: '#FFFFFF'
+          }
+        })
+        const qrCodePath = path.join(ticketsDir, `qr_${token}.png`)
+        await writeFile(qrCodePath, qrCodeBuffer)
+        
+        // Insert ticket into database
+        await db.execute(
+          'INSERT INTO tickets (event_id, token, qr_code_url, is_verified) VALUES (?, ?, ?, ?)',
+          [eventId, token, `/tickets/qr_${token}.png`, false]
+        )
+      } catch (ticketError) {
+        console.error(`⚠️ Failed to generate ticket ${i + 1}:`, ticketError)
+        // Continue with other tickets
+      }
     }
 
     console.log('✅ Event creation completed successfully')
