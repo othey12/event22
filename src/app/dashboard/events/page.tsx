@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Calendar, MapPin, Users, Plus, Eye, Download } from 'lucide-react'
+import { Calendar, MapPin, Users, Plus, Eye, Download, Loader2 } from 'lucide-react'
 import db from '@/lib/db'
 import { formatDateTime } from '@/lib/utils'
 
@@ -65,10 +65,21 @@ export default async function EventsPage() {
               <div key={event.id} className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-xl transition-all transform hover:-translate-y-1">
                 <div className={`h-2 ${event.type === 'Seminar' ? 'bg-blue-500' : 'bg-green-500'}`}></div>
                 
+                {/* Ticket Design Preview */}
+                {event.ticket_design && (
+                  <div className="h-32 bg-gray-100 overflow-hidden">
+                    <img 
+                      src={event.ticket_design} 
+                      alt="Ticket Design" 
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                )}
+                
                 <div className="p-6">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
-                      <h3 className="text-xl font-semibold text-gray-900 mb-2">{event.name}</h3>
+                      <h3 className="text-xl font-semibold text-gray-900 mb-2 line-clamp-2">{event.name}</h3>
                       <span className={`inline-block px-2 py-1 text-xs font-medium rounded-full ${
                         event.type === 'Seminar' 
                           ? 'bg-blue-100 text-blue-800' 
@@ -81,16 +92,30 @@ export default async function EventsPage() {
 
                   <div className="space-y-3 mb-6">
                     <div className="flex items-center text-gray-600">
-                      <MapPin className="h-4 w-4 mr-2" />
-                      <span className="text-sm">{event.location}</span>
+                      <MapPin className="h-4 w-4 mr-2 flex-shrink-0" />
+                      <span className="text-sm truncate">{event.location}</span>
                     </div>
                     <div className="flex items-center text-gray-600">
-                      <Calendar className="h-4 w-4 mr-2" />
+                      <Calendar className="h-4 w-4 mr-2 flex-shrink-0" />
                       <span className="text-sm">{formatDateTime(event.start_time)}</span>
                     </div>
                     <div className="flex items-center text-gray-600">
-                      <Users className="h-4 w-4 mr-2" />
-                      <span className="text-sm">{event.verified_tickets}/{event.total_tickets} Registered</span>
+                      <Users className="h-4 w-4 mr-2 flex-shrink-0" />
+                      <span className="text-sm">{event.verified_tickets || 0}/{event.total_tickets || 0} Registered</span>
+                    </div>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div className="mb-4">
+                    <div className="flex justify-between text-sm text-gray-600 mb-1">
+                      <span>Registration Progress</span>
+                      <span>{Math.round(((event.verified_tickets || 0) / (event.total_tickets || 1)) * 100)}%</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                        style={{ width: `${Math.round(((event.verified_tickets || 0) / (event.total_tickets || 1)) * 100)}%` }}
+                      ></div>
                     </div>
                   </div>
 
@@ -103,13 +128,10 @@ export default async function EventsPage() {
                         <Eye className="h-4 w-4" />
                         <span>View</span>
                       </Link>
-                      <Link 
-                        href={`/dashboard/events/${event.id}/tickets`}
-                        className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-center py-2 px-4 rounded-lg text-sm font-medium transition-colors flex items-center justify-center space-x-1"
-                      >
+                      <button className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-center py-2 px-4 rounded-lg text-sm font-medium transition-colors flex items-center justify-center space-x-1">
                         <Download className="h-4 w-4" />
-                        <span>Tickets</span>
-                      </Link>
+                        <span>Export</span>
+                      </button>
                     </div>
                   </div>
                 </div>

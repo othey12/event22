@@ -1,13 +1,27 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Calendar, ArrowLeft, Upload, Loader2, X } from 'lucide-react'
 
-export default function CreateEventPage() {
+interface EventData {
+  id: number
+  name: string
+  slug: string
+  type: string
+  location: string
+  description: string
+  start_time: string
+  end_time: string
+  quota: number
+  ticket_design?: string
+}
+
+export default function EditEventPage({ params }: { params: { id: string } }) {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
+  const [fetchLoading, setFetchLoading] = useState(true)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [formData, setFormData] = useState({
@@ -20,6 +34,44 @@ export default function CreateEventPage() {
     endTime: '',
     quota: '',
   })
+
+  useEffect(() => {
+    fetchEventData()
+  }, [params.id])
+
+  const fetchEventData = async () => {
+    try {
+      const response = await fetch(`/api/events/${params.id}`)
+      if (response.ok) {
+        const data = await response.json()
+        const event = data.event
+        
+        setFormData({
+          name: event.name,
+          slug: event.slug,
+          type: event.type,
+          location: event.location,
+          description: event.description || '',
+          startTime: new Date(event.start_time).toISOString().slice(0, 16),
+          endTime: new Date(event.end_time).toISOString().slice(0, 16),
+          quota: event.quota.toString(),
+        })
+
+        if (event.ticket_design) {
+          setPreviewUrl(event.ticket_design)
+        }
+      } else {
+        alert('Failed to load event data')
+        router.push('/dashboard/events')
+      }
+    } catch (error) {
+      console.error('Error fetching event:', error)
+      alert('Failed to load event data')
+      router.push('/dashboard/events')
+    } finally {
+      setFetchLoading(false)
+    }
+  }
 
   const generateSlug = (name: string) => {
     return name
@@ -71,21 +123,20 @@ export default function CreateEventPage() {
         form.append('ticketDesign', selectedFile)
       }
       
-      const response = await fetch('/api/events', {
-        method: 'POST',
+      const response = await fetch(`/api/events/${params.id}`, {
+        method: 'PUT',
         body: form,
       })
 
       if (response.ok) {
-        const result = await response.json()
-        router.push(`/dashboard/events/${result.eventId}`)
+        router.push(`/dashboard/events/${params.id}`)
       } else {
         const error = await response.json()
         alert(`Error: ${error.message}`)
       }
     } catch (error) {
-      console.error('Error creating event:', error)
-      alert('Failed to create event')
+      console.error('Error updating event:', error)
+      alert('Failed to update event')
     } finally {
       setLoading(false)
     }
@@ -108,6 +159,17 @@ export default function CreateEventPage() {
     })
   }
 
+  if (fetchLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-blue-600" />
+          <p className="text-gray-600">Loading event details...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
       {/* Header */}
@@ -123,9 +185,9 @@ export default function CreateEventPage() {
               </Link>
             </div>
             <nav className="flex space-x-4">
-              <Link href="/dashboard/events" className="text-gray-600 hover:text-gray-900 px-4 py-2 rounded-lg transition-colors flex items-center space-x-2">
+              <Link href={`/dashboard/events/${params.id}`} className="text-gray-600 hover:text-gray-900 px-4 py-2 rounded-lg transition-colors flex items-center space-x-2">
                 <ArrowLeft className="h-4 w-4" />
-                <span>Back to Events</span>
+                <span>Back to Event</span>
               </Link>
             </nav>
           </div>
@@ -135,8 +197,8 @@ export default function CreateEventPage() {
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Page Title */}
         <div className="mb-8">
-          <h2 className="text-3xl font-bold text-gray-900 mb-2">Create New Event</h2>
-          <p className="text-gray-600">Fill in the details to create a new event</p>
+          <h2 className="text-3xl font-bold text-gray-900 mb-2">Edit Event</h2>
+          <p className="text-gray-600">Update event details and settings</p>
         </div>
 
         {/* Form */}
@@ -174,7 +236,7 @@ export default function CreateEventPage() {
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors bg-white text-gray-900 placeholder-gray-500"
                 placeholder="event-slug-url"
               />
-              <p className="text-sm text-gray-500 mt-1">URL-friendly version of the event name (auto-generated)</p>
+              <p className="text-sm text-gray-500 mt-1">URL-friendly version of the event name</p>
             </div>
 
             {/* Event Type and Location */}
@@ -286,7 +348,7 @@ export default function CreateEventPage() {
                 E-Ticket Design
               </label>
               
-              {!selectedFile ? (
+              {!previewUrl ? (
                 <div className="mt-2 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:border-gray-400 transition-colors">
                   <div className="space-y-1 text-center">
                     <Upload className="mx-auto h-12 w-12 text-gray-400" />
@@ -311,27 +373,42 @@ export default function CreateEventPage() {
                 <div className="mt-2 border-2 border-gray-300 border-dashed rounded-lg p-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-4">
-                      {previewUrl && (
-                        <img 
-                          src={previewUrl} 
-                          alt="Preview" 
-                          className="w-16 h-16 object-cover rounded-lg border border-gray-200"
-                        />
-                      )}
+                      <img 
+                        src={previewUrl} 
+                        alt="Preview" 
+                        className="w-16 h-16 object-cover rounded-lg border border-gray-200"
+                      />
                       <div>
-                        <p className="text-sm font-medium text-gray-900">{selectedFile.name}</p>
-                        <p className="text-sm text-gray-500">
-                          {Math.round(selectedFile.size / 1024)} KB
+                        <p className="text-sm font-medium text-gray-900">
+                          {selectedFile ? selectedFile.name : 'Current ticket design'}
                         </p>
+                        {selectedFile && (
+                          <p className="text-sm text-gray-500">
+                            {Math.round(selectedFile.size / 1024)} KB
+                          </p>
+                        )}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={removeFile}
-                      className="text-red-500 hover:text-red-700 p-1"
-                    >
-                      <X className="h-5 w-5" />
-                    </button>
+                    <div className="flex space-x-2">
+                      <label htmlFor="ticketDesign" className="cursor-pointer text-blue-600 hover:text-blue-700 text-sm font-medium">
+                        Change
+                        <input
+                          id="ticketDesign"
+                          name="ticketDesign"
+                          type="file"
+                          accept="image/*"
+                          onChange={handleFileChange}
+                          className="sr-only"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={removeFile}
+                        className="text-red-500 hover:text-red-700 p-1"
+                      >
+                        <X className="h-5 w-5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -340,7 +417,7 @@ export default function CreateEventPage() {
             {/* Submit Button */}
             <div className="flex justify-end space-x-4 pt-6">
               <Link 
-                href="/dashboard/events"
+                href={`/dashboard/events/${params.id}`}
                 className="px-6 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
               >
                 Cancel
@@ -351,7 +428,7 @@ export default function CreateEventPage() {
                 className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
               >
                 {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-                <span>{loading ? 'Creating...' : 'Create Event'}</span>
+                <span>{loading ? 'Updating...' : 'Update Event'}</span>
               </button>
             </div>
           </form>

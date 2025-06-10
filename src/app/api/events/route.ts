@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
 
     for (let i = 0; i < quota; i++) {
       const token = uuidv4().replace(/-/g, '').substring(0, 12).toUpperCase()
-      const registrationUrl = `${process.env.SERVER_URL || 'http://10.10.11.28:3000'}/register?token=${token}`
+      const registrationUrl = `${process.env.SERVER_URL || 'http://localhost:3000'}/register?token=${token}`
       
       // Generate QR code
       const qrCodeBuffer = await QRCode.toBuffer(registrationUrl)
