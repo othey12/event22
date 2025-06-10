@@ -7,9 +7,12 @@ import db, { testConnection } from '@/lib/db'
 
 export async function POST(request: NextRequest) {
   try {
+    console.log('🚀 Starting event creation...');
+    
     // Test database connection first
     const isConnected = await testConnection()
     if (!isConnected) {
+      console.error('❌ Database connection failed');
       return NextResponse.json({ message: 'Database connection failed' }, { status: 500 })
     }
 
@@ -25,7 +28,7 @@ export async function POST(request: NextRequest) {
     const quota = parseInt(formData.get('quota') as string)
     const ticketDesignFile = formData.get('ticketDesign') as File | null
 
-    console.log('📝 Creating event:', { name, slug, type, location, quota })
+    console.log('📝 Creating event:', { name, slug, type, location, quota });
 
     if (!name || !slug || !type || !location || !startTime || !endTime || !quota) {
       return NextResponse.json({ message: 'Missing required fields' }, { status: 400 })
@@ -47,65 +50,76 @@ export async function POST(request: NextRequest) {
     let ticketDesignType = null
     
     if (ticketDesignFile && ticketDesignFile.size > 0) {
-      console.log('📁 Processing file upload:', ticketDesignFile.name, ticketDesignFile.size)
+      console.log('📁 Processing file upload:', ticketDesignFile.name, ticketDesignFile.size);
       
       try {
         const bytes = await ticketDesignFile.arrayBuffer()
         const buffer = Buffer.from(bytes)
         
-        // Create uploads directory if it doesn't exist - use absolute path
-        const publicDir = path.join(process.cwd(), 'public')
+        // Ensure directories exist with absolute paths
+        const projectRoot = process.cwd()
+        const publicDir = path.join(projectRoot, 'public')
         const uploadsDir = path.join(publicDir, 'uploads')
         
+        console.log('📂 Project root:', projectRoot);
+        console.log('📂 Public directory:', publicDir);
+        console.log('📂 Uploads directory:', uploadsDir);
+        
+        // Create directories if they don't exist
         try {
           await access(publicDir)
-          console.log('📂 Public directory exists')
+          console.log('✅ Public directory exists');
         } catch {
           await mkdir(publicDir, { recursive: true })
-          console.log('📂 Created public directory:', publicDir)
+          console.log('✅ Created public directory');
         }
         
         try {
           await access(uploadsDir)
-          console.log('📂 Uploads directory exists')
+          console.log('✅ Uploads directory exists');
         } catch {
           await mkdir(uploadsDir, { recursive: true })
-          console.log('📂 Created uploads directory:', uploadsDir)
+          console.log('✅ Created uploads directory');
         }
         
-        // Generate unique filename with timestamp
+        // Generate unique filename
         const timestamp = Date.now()
         const fileExtension = path.extname(ticketDesignFile.name)
-        const baseFileName = ticketDesignFile.name.replace(fileExtension, '').replace(/[^a-zA-Z0-9.-]/g, '-')
+        const baseFileName = ticketDesignFile.name
+          .replace(fileExtension, '')
+          .replace(/[^a-zA-Z0-9.-]/g, '-')
+          .toLowerCase()
         const filename = `ticket-${timestamp}-${baseFileName}${fileExtension}`
         const filepath = path.join(uploadsDir, filename)
         
-        // Write file with proper error handling
-        await writeFile(filepath, buffer)
-        console.log('✅ File saved to:', filepath)
+        console.log('💾 Saving file to:', filepath);
         
-        // Verify file was written and get stats
+        // Write file
+        await writeFile(filepath, buffer)
+        console.log('✅ File written successfully');
+        
+        // Verify file exists and get stats
         try {
           await access(filepath)
           const fs = require('fs')
           const stats = fs.statSync(filepath)
-          console.log('✅ File verified - size:', stats.size, 'bytes')
-        } catch (verifyError) {
-          console.error('❌ File verification failed:', verifyError)
-          throw new Error('Failed to save file properly')
-        }
-        
-        ticketDesignPath = `/uploads/${filename}`
-        ticketDesignSize = ticketDesignFile.size
-        ticketDesignType = ticketDesignFile.type
+          console.log('✅ File verified - size:', stats.size, 'bytes');
+          
+          ticketDesignPath = `/uploads/${filename}`
+          ticketDesignSize = ticketDesignFile.size
+          ticketDesignType = ticketDesignFile.type
 
-        console.log('🖼️ Ticket design saved:', {
-          path: ticketDesignPath,
-          size: ticketDesignSize,
-          type: ticketDesignType
-        })
+          console.log('🖼️ Ticket design saved successfully:', {
+            path: ticketDesignPath,
+            size: ticketDesignSize,
+            type: ticketDesignType
+          });
+        } catch (verifyError) {
+          console.error('❌ File verification failed:', verifyError);
+          throw new Error('Failed to verify saved file');
+        }
       } catch (fileError) {
-        console.error('❌ File upload error:', fileError)
+        console.error('❌ File upload error:', fileError);
         return NextResponse.json({ 
           message: 'Failed to upload ticket design: ' + (fileError instanceof Error ? fileError.message : 'Unknown error')
         }, { status: 500 })
@@ -113,13 +127,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Insert event into database
+    console.log('💾 Inserting event into database...');
     const [result] = await db.execute(
       'INSERT INTO events (name, slug, type, location, description, start_time, end_time, quota, ticket_design, ticket_design_size, ticket_design_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [name, slug, type, location, description, startTime, endTime, quota, ticketDesignPath, ticketDesignSize, ticketDesignType]
     )
 
     const eventId = (result as any).insertId
-    console.log('🎉 Event created with ID:', eventId)
+    console.log('🎉 Event created with ID:', eventId);
 
     // Track file upload in database if file was uploaded
     if (ticketDesignPath) {
@@ -128,10 +143,9 @@ export async function POST(request: NextRequest) {
           'INSERT INTO file_uploads (filename, original_name, file_path, file_size, file_type, upload_type, related_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
           [path.basename(ticketDesignPath), ticketDesignFile!.name, ticketDesignPath, ticketDesignSize, ticketDesignType, 'ticket_design', eventId]
         )
-        console.log('📝 File upload tracked in database')
+        console.log('📝 File upload tracked in database');
       } catch (dbError) {
-        console.error('⚠️ Failed to track file upload in database:', dbError)
-        // Don't fail the entire operation for this
+        console.error('⚠️ Failed to track file upload in database:', dbError);
       }
     }
 
@@ -139,12 +153,13 @@ export async function POST(request: NextRequest) {
     const ticketsDir = path.join(process.cwd(), 'public', 'tickets')
     try {
       await access(ticketsDir)
+      console.log('✅ Tickets directory exists');
     } catch {
       await mkdir(ticketsDir, { recursive: true })
-      console.log('📂 Created tickets directory:', ticketsDir)
+      console.log('✅ Created tickets directory');
     }
     
-    console.log('🎫 Generating', quota, 'tickets...')
+    console.log('🎫 Generating', quota, 'tickets...');
 
     const serverUrl = process.env.SERVER_URL || 'http://localhost:3000'
 
@@ -171,14 +186,15 @@ export async function POST(request: NextRequest) {
           [eventId, token, `/tickets/qr_${token}.png`, false]
         )
         
-        console.log(`✅ Generated ticket ${i + 1}/${quota}: ${token}`)
+        if ((i + 1) % 10 === 0 || i === quota - 1) {
+          console.log(`✅ Generated ${i + 1}/${quota} tickets`);
+        }
       } catch (ticketError) {
-        console.error(`⚠️ Failed to generate ticket ${i + 1}:`, ticketError)
-        // Continue with other tickets
+        console.error(`⚠️ Failed to generate ticket ${i + 1}:`, ticketError);
       }
     }
 
-    console.log('✅ Event creation completed successfully')
+    console.log('✅ Event creation completed successfully');
 
     return NextResponse.json({ 
       message: 'Event created successfully',
@@ -187,7 +203,7 @@ export async function POST(request: NextRequest) {
       ticketDesign: ticketDesignPath
     })
   } catch (error) {
-    console.error('❌ Error creating event:', error)
+    console.error('❌ Error creating event:', error);
     return NextResponse.json({ 
       message: 'Internal server error', 
       error: error instanceof Error ? error.message : 'Unknown error'
@@ -197,27 +213,40 @@ export async function POST(request: NextRequest) {
 
 export async function GET() {
   try {
+    console.log('🔍 Starting GET /api/events...');
+    
     // Test database connection first
     const isConnected = await testConnection()
     if (!isConnected) {
-      console.error('❌ Database connection failed in GET /api/events')
+      console.error('❌ Database connection failed in GET /api/events');
       return NextResponse.json({ message: 'Database connection failed' }, { status: 500 })
     }
 
-    console.log('🔍 Fetching all events with statistics...')
+    console.log('🔍 Fetching all events with statistics...');
 
+    // Simple query to get events with ticket statistics
     const [rows] = await db.execute(`
-      SELECT e.*, 
-             COUNT(t.id) as total_tickets,
-             COUNT(CASE WHEN t.is_verified = TRUE THEN 1 END) as verified_tickets
+      SELECT 
+        e.id, e.name, e.slug, e.type, e.location, e.description, 
+        e.start_time, e.end_time, e.quota, e.ticket_design, 
+        e.ticket_design_size, e.ticket_design_type, 
+        e.created_at, e.updated_at,
+        COALESCE(t.total_tickets, 0) as total_tickets,
+        COALESCE(t.verified_tickets, 0) as verified_tickets
       FROM events e
-      LEFT JOIN tickets t ON e.id = t.event_id
-      GROUP BY e.id, e.name, e.slug, e.type, e.location, e.description, e.start_time, e.end_time, e.quota, e.ticket_design, e.ticket_design_size, e.ticket_design_type, e.created_at, e.updated_at
+      LEFT JOIN (
+        SELECT 
+          event_id,
+          COUNT(*) as total_tickets,
+          SUM(CASE WHEN is_verified = TRUE THEN 1 ELSE 0 END) as verified_tickets
+        FROM tickets 
+        GROUP BY event_id
+      ) t ON e.id = t.event_id
       ORDER BY e.created_at DESC
     `)
     
     const events = rows as any[]
-    console.log('📊 Fetched', events.length, 'events with statistics')
+    console.log('📊 Fetched', events.length, 'events with statistics');
     
     // Log sample event for debugging
     if (events.length > 0) {
@@ -227,12 +256,12 @@ export async function GET() {
         total_tickets: events[0].total_tickets,
         verified_tickets: events[0].verified_tickets,
         ticket_design: events[0].ticket_design
-      })
+      });
     }
     
     return NextResponse.json(events)
   } catch (error) {
-    console.error('❌ Error fetching events:', error)
+    console.error('❌ Error fetching events:', error);
     return NextResponse.json({ 
       message: 'Internal server error',
       error: error instanceof Error ? error.message : 'Unknown error'
@@ -267,19 +296,19 @@ export async function DELETE(request: NextRequest) {
         const fs = require('fs').promises
         const filePath = path.join(process.cwd(), 'public', event.ticket_design)
         await fs.unlink(filePath)
-        console.log('🗑️ Deleted file:', filePath)
+        console.log('🗑️ Deleted file:', filePath);
       } catch (fileError) {
-        console.error('⚠️ Error deleting file:', fileError)
+        console.error('⚠️ Error deleting file:', fileError);
       }
     }
 
     // Delete event (cascade will handle tickets, participants, certificates)
     await db.execute('DELETE FROM events WHERE id = ?', [eventId])
-    console.log('🗑️ Event deleted:', eventId)
+    console.log('🗑️ Event deleted:', eventId);
 
     return NextResponse.json({ message: 'Event deleted successfully' })
   } catch (error) {
-    console.error('❌ Error deleting event:', error)
+    console.error('❌ Error deleting event:', error);
     return NextResponse.json({ message: 'Internal server error' }, { status: 500 })
   }
 }

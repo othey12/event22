@@ -7,7 +7,7 @@ interface DBConfig extends mysql.PoolOptions {
   database: string;
 }
 
-const pool = mysql.createPool({
+const dbConfig: DBConfig = {
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || 'bismillah123',
@@ -19,18 +19,40 @@ const pool = mysql.createPool({
   acquireTimeout: 60000,
   timeout: 60000,
   charset: 'utf8mb4'
-} as DBConfig);
+};
+
+console.log('🔧 Database Configuration:', {
+  host: dbConfig.host,
+  user: dbConfig.user,
+  database: dbConfig.database,
+  port: dbConfig.port || 3306
+});
+
+const pool = mysql.createPool(dbConfig);
 
 export async function testConnection(): Promise<boolean> {
   let connection: mysql.PoolConnection | undefined;
   try {
+    console.log('🔍 Testing database connection...');
     connection = await pool.getConnection();
     await connection.ping();
     console.log('✅ Database connection successful');
+    
+    // Test if database exists and has tables
+    const [tables] = await connection.execute(
+      "SHOW TABLES FROM " + dbConfig.database
+    );
+    console.log('📋 Available tables:', (tables as any[]).map(t => Object.values(t)[0]));
+    
     return true;
   } catch (error: unknown) {
     if (error instanceof Error) {
       console.error('❌ Database connection failed:', error.message);
+      console.error('🔧 Connection details:', {
+        host: dbConfig.host,
+        user: dbConfig.user,
+        database: dbConfig.database
+      });
     } else {
       console.error('❌ Unknown database connection error occurred');
     }
@@ -43,22 +65,24 @@ export async function testConnection(): Promise<boolean> {
 export async function initializeDatabase(): Promise<boolean> {
   let connection: mysql.PoolConnection | undefined;
   try {
+    console.log('🚀 Initializing database...');
     connection = await pool.getConnection();
 
     // Check if tables exist
     const [rows] = await connection.execute(
       "SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = ? AND table_name = 'events'",
-      [process.env.DB_NAME || 'event_management']
+      [dbConfig.database]
     );
 
     const tables = rows as mysql.RowDataPacket[];
     
     if (tables.length === 0) {
-      console.log('⚠️ Tables not found, please ensure database is initialized');
+      console.log('⚠️ Events table not found, please ensure database is initialized');
+      return false;
     } else {
       console.log('✅ Database tables exist');
       
-      // Check if we have sample data and log detailed stats
+      // Get detailed statistics
       const [eventCount] = await connection.execute('SELECT COUNT(*) as count FROM events');
       const [ticketCount] = await connection.execute('SELECT COUNT(*) as count FROM tickets');
       const [participantCount] = await connection.execute('SELECT COUNT(*) as count FROM participants');
@@ -74,9 +98,9 @@ export async function initializeDatabase(): Promise<boolean> {
         - Tickets: ${ticketCountResult[0].count}
         - Participants: ${participantCountResult[0].count}
         - Verified Tickets: ${verifiedCountResult[0].count}`);
+        
+      return true;
     }
-
-    return true;
   } catch (error: unknown) {
     if (error instanceof Error) {
       console.error('❌ Database initialization check failed:', error.message);
@@ -89,9 +113,11 @@ export async function initializeDatabase(): Promise<boolean> {
   }
 }
 
-// Initialize on module load
-initializeDatabase().catch((error) => {
-  console.error('Failed to initialize database:', error);
+// Test connection immediately
+testConnection().then(isConnected => {
+  if (isConnected) {
+    initializeDatabase();
+  }
 });
 
 export default pool;

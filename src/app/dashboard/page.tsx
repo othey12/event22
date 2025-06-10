@@ -5,6 +5,8 @@ import { formatDateTime } from '@/lib/utils'
 
 async function getDashboardStats() {
   try {
+    console.log('🔍 Starting dashboard stats fetch...');
+    
     // Test database connection first
     const isConnected = await testConnection()
     if (!isConnected) {
@@ -17,25 +19,25 @@ async function getDashboardStats() {
       }
     }
 
-    console.log('🔍 Fetching dashboard statistics...')
+    console.log('🔍 Fetching dashboard statistics...');
 
-    // Get counts with proper error handling and explicit queries
-    const [eventsResult] = await db.execute('SELECT COUNT(*) as count FROM events')
-    const [participantsResult] = await db.execute('SELECT COUNT(*) as count FROM participants')
-    const [ticketsResult] = await db.execute('SELECT COUNT(*) as count FROM tickets')
-    const [verifiedResult] = await db.execute('SELECT COUNT(*) as count FROM tickets WHERE is_verified = TRUE')
+    // Get counts with individual queries for better reliability
+    const [eventsResult] = await db.execute('SELECT COUNT(*) as count FROM events');
+    const [participantsResult] = await db.execute('SELECT COUNT(*) as count FROM participants');
+    const [ticketsResult] = await db.execute('SELECT COUNT(*) as count FROM tickets');
+    const [verifiedResult] = await db.execute('SELECT COUNT(*) as count FROM tickets WHERE is_verified = TRUE');
     
     const stats = {
-      totalEvents: (eventsResult as any)[0].count || 0,
-      totalParticipants: (participantsResult as any)[0].count || 0,
-      totalTickets: (ticketsResult as any)[0].count || 0,
-      verifiedTickets: (verifiedResult as any)[0].count || 0,
+      totalEvents: Number((eventsResult as any)[0].count) || 0,
+      totalParticipants: Number((participantsResult as any)[0].count) || 0,
+      totalTickets: Number((ticketsResult as any)[0].count) || 0,
+      verifiedTickets: Number((verifiedResult as any)[0].count) || 0,
     }
 
-    console.log('📊 Dashboard stats fetched:', stats)
-    return stats
+    console.log('📊 Dashboard stats fetched successfully:', stats);
+    return stats;
   } catch (error) {
-    console.error('❌ Error fetching dashboard stats:', error)
+    console.error('❌ Error fetching dashboard stats:', error);
     return {
       totalEvents: 0,
       totalParticipants: 0,  
@@ -47,6 +49,8 @@ async function getDashboardStats() {
 
 async function getRecentEvents() {
   try {
+    console.log('🔍 Starting events fetch...');
+    
     // Test database connection first
     const isConnected = await testConnection()
     if (!isConnected) {
@@ -54,70 +58,80 @@ async function getRecentEvents() {
       return []
     }
 
-    console.log('🔍 Fetching recent events...')
+    console.log('🔍 Fetching recent events...');
 
-    // Get ALL events with proper aggregation - simplified query for better compatibility
-    const [rows] = await db.execute(`
+    // Simple query first to get events
+    const [eventRows] = await db.execute(`
       SELECT 
-        e.id, 
-        e.name, 
-        e.slug, 
-        e.type, 
-        e.location, 
-        e.description, 
-        e.start_time, 
-        e.end_time, 
-        e.quota, 
-        e.ticket_design, 
-        e.ticket_design_size, 
-        e.ticket_design_type, 
-        e.created_at, 
-        e.updated_at,
-        COALESCE(ticket_stats.total_tickets, 0) as total_tickets,
-        COALESCE(ticket_stats.verified_tickets, 0) as verified_tickets
-      FROM events e
-      LEFT JOIN (
-        SELECT 
-          event_id,
-          COUNT(*) as total_tickets,
-          SUM(CASE WHEN is_verified = TRUE THEN 1 ELSE 0 END) as verified_tickets
-        FROM tickets 
-        GROUP BY event_id
-      ) ticket_stats ON e.id = ticket_stats.event_id
-      ORDER BY e.created_at DESC
-    `)
+        id, name, slug, type, location, description, 
+        start_time, end_time, quota, ticket_design, 
+        ticket_design_size, ticket_design_type, 
+        created_at, updated_at
+      FROM events 
+      ORDER BY created_at DESC
+    `);
     
-    const events = rows as any[]
-    console.log(`📊 Found ${events.length} events`)
+    const events = eventRows as any[];
+    console.log(`📊 Found ${events.length} events`);
     
-    // Log first event for debugging
-    if (events.length > 0) {
-      console.log('📝 Sample event:', {
-        id: events[0].id,
-        name: events[0].name,
-        total_tickets: events[0].total_tickets,
-        verified_tickets: events[0].verified_tickets,
-        ticket_design: events[0].ticket_design
+    // Get ticket statistics for each event
+    const eventsWithStats = await Promise.all(
+      events.map(async (event) => {
+        try {
+          const [ticketStats] = await db.execute(`
+            SELECT 
+              COUNT(*) as total_tickets,
+              SUM(CASE WHEN is_verified = TRUE THEN 1 ELSE 0 END) as verified_tickets
+            FROM tickets 
+            WHERE event_id = ?
+          `, [event.id]);
+          
+          const stats = (ticketStats as any[])[0];
+          
+          return {
+            ...event,
+            total_tickets: Number(stats.total_tickets) || 0,
+            verified_tickets: Number(stats.verified_tickets) || 0
+          };
+        } catch (error) {
+          console.error(`❌ Error fetching stats for event ${event.id}:`, error);
+          return {
+            ...event,
+            total_tickets: 0,
+            verified_tickets: 0
+          };
+        }
       })
+    );
+    
+    // Log sample event for debugging
+    if (eventsWithStats.length > 0) {
+      console.log('📝 Sample event data:', {
+        id: eventsWithStats[0].id,
+        name: eventsWithStats[0].name,
+        total_tickets: eventsWithStats[0].total_tickets,
+        verified_tickets: eventsWithStats[0].verified_tickets,
+        ticket_design: eventsWithStats[0].ticket_design
+      });
     }
     
-    return events
+    return eventsWithStats;
   } catch (error) {
-    console.error('❌ Error fetching recent events:', error)
-    return []
+    console.error('❌ Error fetching recent events:', error);
+    return [];
   }
 }
 
 export default async function DashboardPage() {
-  console.log('🚀 Loading dashboard page...')
+  console.log('🚀 Loading dashboard page...');
   
-  const stats = await getDashboardStats()
-  const recentEvents = await getRecentEvents()
+  const stats = await getDashboardStats();
+  const recentEvents = await getRecentEvents();
 
   console.log('📊 Final dashboard data:', {
     stats,
     eventsCount: recentEvents.length
-  })
+  });
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">

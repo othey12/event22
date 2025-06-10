@@ -19,13 +19,20 @@ export async function GET(
     // Get event details with statistics
     const [eventRows] = await db.execute(`
       SELECT e.*, 
-             COUNT(t.id) as total_tickets,
-             COUNT(CASE WHEN t.is_verified = TRUE THEN 1 END) as verified_tickets
+             COALESCE(t.total_tickets, 0) as total_tickets,
+             COALESCE(t.verified_tickets, 0) as verified_tickets
       FROM events e
-      LEFT JOIN tickets t ON e.id = t.event_id
+      LEFT JOIN (
+        SELECT 
+          event_id,
+          COUNT(*) as total_tickets,
+          SUM(CASE WHEN is_verified = TRUE THEN 1 ELSE 0 END) as verified_tickets
+        FROM tickets 
+        WHERE event_id = ?
+        GROUP BY event_id
+      ) t ON e.id = t.event_id
       WHERE e.id = ?
-      GROUP BY e.id
-    `, [eventId])
+    `, [eventId, eventId])
 
     const events = eventRows as any[]
     if (events.length === 0) {
@@ -100,34 +107,39 @@ export async function PUT(
         const bytes = await ticketDesignFile.arrayBuffer()
         const buffer = Buffer.from(bytes)
         
-        // Create uploads directory if it doesn't exist - use absolute path
-        const publicDir = path.join(process.cwd(), 'public')
+        // Ensure directories exist with absolute paths
+        const projectRoot = process.cwd()
+        const publicDir = path.join(projectRoot, 'public')
         const uploadsDir = path.join(publicDir, 'uploads')
         
+        // Create directories if they don't exist
         try {
           await access(publicDir)
-          console.log('📂 Public directory exists')
+          console.log('✅ Public directory exists');
         } catch {
           await mkdir(publicDir, { recursive: true })
-          console.log('📂 Created public directory:', publicDir)
+          console.log('✅ Created public directory');
         }
         
         try {
           await access(uploadsDir)
-          console.log('📂 Uploads directory exists')
+          console.log('✅ Uploads directory exists');
         } catch {
           await mkdir(uploadsDir, { recursive: true })
-          console.log('📂 Created uploads directory:', uploadsDir)
+          console.log('✅ Created uploads directory');
         }
         
-        // Generate unique filename with timestamp
+        // Generate unique filename
         const timestamp = Date.now()
         const fileExtension = path.extname(ticketDesignFile.name)
-        const baseFileName = ticketDesignFile.name.replace(fileExtension, '').replace(/[^a-zA-Z0-9.-]/g, '-')
+        const baseFileName = ticketDesignFile.name
+          .replace(fileExtension, '')
+          .replace(/[^a-zA-Z0-9.-]/g, '-')
+          .toLowerCase()
         const filename = `ticket-${timestamp}-${baseFileName}${fileExtension}`
         const filepath = path.join(uploadsDir, filename)
         
-        // Write file with proper error handling
+        // Write file
         await writeFile(filepath, buffer)
         console.log('✅ File saved to:', filepath)
         
@@ -161,7 +173,6 @@ export async function PUT(
           console.log('📝 File upload tracked in database')
         } catch (dbError) {
           console.error('⚠️ Failed to track file upload in database:', dbError)
-          // Don't fail the entire operation for this
         }
 
         // Update event with new file
