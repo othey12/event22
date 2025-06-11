@@ -18,10 +18,12 @@ const dbConfig: mysql.PoolOptions = {
   // Add retry logic
   reconnect: true,
   idleTimeout: 300000,
-  // SSL configuration for production
-  ssl: process.env.NODE_ENV === 'production' ? {
-    rejectUnauthorized: false
-  } : false
+  // SSL configuration - only add if in production
+  ...(process.env.NODE_ENV === 'production' && {
+    ssl: {
+      rejectUnauthorized: false
+    }
+  })
 };
 
 console.log('🔧 Database Configuration:', {
