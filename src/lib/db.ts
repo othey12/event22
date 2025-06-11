@@ -8,8 +8,10 @@ const dbConfig: mysql.PoolOptions = {
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
-  timeout: 60000,
-  charset: 'utf8mb4'
+  connectTimeout: 60000, // Changed from timeout to connectTimeout
+  charset: 'utf8mb4',
+  enableKeepAlive: true, // Added recommended keepalive option
+  keepAliveInitialDelay: 10000 // Added keepalive delay
 };
 
 console.log('🔧 Database Configuration:', {
