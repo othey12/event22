@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Calendar, Users, Award, BarChart3, Plus, Eye, Ticket, TrendingUp, Clock, MapPin } from 'lucide-react'
+import { Calendar, Users, Award, BarChart3, Plus, Eye, Ticket, TrendingUp, Clock, MapPin, CheckCircle, AlertCircle } from 'lucide-react'
 import db, { testConnection } from '@/lib/db'
 import { formatDateTime } from '@/lib/utils'
 
@@ -20,6 +20,7 @@ async function getDashboardStats() {
         registrationRate: 0,
         upcomingEvents: 0,
         pastEvents: 0,
+        ongoingEvents: 0,
         totalCertificates: 0,
         sentCertificates: 0,
       }
@@ -35,6 +36,7 @@ async function getDashboardStats() {
       verifiedResult,
       upcomingEventsResult,
       pastEventsResult,
+      ongoingEventsResult,
       certificatesResult,
       sentCertificatesResult
     ] = await Promise.all([
@@ -44,6 +46,7 @@ async function getDashboardStats() {
       db.execute('SELECT COUNT(*) as count FROM tickets WHERE is_verified = TRUE'),
       db.execute('SELECT COUNT(*) as count FROM events WHERE start_time > NOW()'),
       db.execute('SELECT COUNT(*) as count FROM events WHERE end_time < NOW()'),
+      db.execute('SELECT COUNT(*) as count FROM events WHERE start_time <= NOW() AND end_time >= NOW()'),
       db.execute('SELECT COUNT(*) as count FROM certificates'),
       db.execute('SELECT COUNT(*) as count FROM certificates WHERE sent = TRUE')
     ]);
@@ -54,6 +57,7 @@ async function getDashboardStats() {
     const verifiedTickets = Number((verifiedResult[0] as any)[0].count) || 0;
     const upcomingEvents = Number((upcomingEventsResult[0] as any)[0].count) || 0;
     const pastEvents = Number((pastEventsResult[0] as any)[0].count) || 0;
+    const ongoingEvents = Number((ongoingEventsResult[0] as any)[0].count) || 0;
     const totalCertificates = Number((certificatesResult[0] as any)[0].count) || 0;
     const sentCertificates = Number((sentCertificatesResult[0] as any)[0].count) || 0;
 
@@ -66,6 +70,7 @@ async function getDashboardStats() {
       registrationRate: totalTickets > 0 ? Math.round((verifiedTickets / totalTickets) * 100) : 0,
       upcomingEvents,
       pastEvents,
+      ongoingEvents,
       totalCertificates,
       sentCertificates,
     }
@@ -83,6 +88,7 @@ async function getDashboardStats() {
       registrationRate: 0,
       upcomingEvents: 0,
       pastEvents: 0,
+      ongoingEvents: 0,
       totalCertificates: 0,
       sentCertificates: 0,
     }
@@ -186,9 +192,11 @@ async function getRecentActivity() {
         p.id,
         p.name as participant_name,
         p.email,
+        p.organization,
         p.registered_at,
         e.name as event_name,
         e.type as event_type,
+        e.start_time,
         'registration' as activity_type
       FROM participants p
       JOIN tickets t ON p.ticket_id = t.id
@@ -207,19 +215,67 @@ async function getRecentActivity() {
   }
 }
 
+async function getEventTypeStats() {
+  try {
+    console.log('🔍 Fetching event type statistics...');
+    
+    const isConnected = await testConnection()
+    if (!isConnected) {
+      return { seminars: 0, workshops: 0 }
+    }
+
+    const [typeStats] = await db.execute(`
+      SELECT 
+        type,
+        COUNT(*) as count,
+        SUM(COALESCE(ticket_stats.verified_tickets, 0)) as total_participants
+      FROM events e
+      LEFT JOIN (
+        SELECT 
+          event_id,
+          SUM(CASE WHEN is_verified = TRUE THEN 1 ELSE 0 END) as verified_tickets
+        FROM tickets 
+        GROUP BY event_id
+      ) ticket_stats ON e.id = ticket_stats.event_id
+      GROUP BY type
+    `);
+    
+    const stats = typeStats as any[];
+    const result = { seminars: 0, workshops: 0, seminarParticipants: 0, workshopParticipants: 0 };
+    
+    stats.forEach(stat => {
+      if (stat.type === 'Seminar') {
+        result.seminars = stat.count;
+        result.seminarParticipants = stat.total_participants || 0;
+      } else if (stat.type === 'Workshop') {
+        result.workshops = stat.count;
+        result.workshopParticipants = stat.total_participants || 0;
+      }
+    });
+    
+    console.log('📊 Event type stats:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ Error fetching event type stats:', error);
+    return { seminars: 0, workshops: 0, seminarParticipants: 0, workshopParticipants: 0 };
+  }
+}
+
 export default async function DashboardPage() {
   console.log('🚀 Loading enhanced dashboard page...');
   
-  const [stats, recentEvents, recentActivity] = await Promise.all([
+  const [stats, recentEvents, recentActivity, eventTypeStats] = await Promise.all([
     getDashboardStats(),
     getRecentEvents(),
-    getRecentActivity()
+    getRecentActivity(),
+    getEventTypeStats()
   ]);
 
   console.log('📊 Final enhanced dashboard data:', {
     stats,
     eventsCount: recentEvents.length,
-    activitiesCount: recentActivity.length
+    activitiesCount: recentActivity.length,
+    eventTypeStats
   });
 
   return (
@@ -261,9 +317,22 @@ export default async function DashboardPage() {
                 <p className="text-gray-500 text-sm font-medium">Total Events</p>
                 <p className="text-3xl font-bold text-gray-900">{stats.totalEvents}</p>
                 <div className="flex items-center space-x-2 mt-1">
-                  <span className="text-sm text-green-600">{stats.upcomingEvents} upcoming</span>
-                  <span className="text-sm text-gray-400">•</span>
-                  <span className="text-sm text-blue-600">{stats.pastEvents} completed</span>
+                  <span className="text-sm text-green-600 flex items-center">
+                    <CheckCircle className="h-3 w-3 mr-1" />
+                    {stats.upcomingEvents} upcoming
+                  </span>
+                  {stats.ongoingEvents > 0 && (
+                    <>
+                      <span className="text-sm text-gray-400">•</span>
+                      <span className="text-sm text-yellow-600 flex items-center">
+                        <AlertCircle className="h-3 w-3 mr-1" />
+                        {stats.ongoingEvents} ongoing
+                      </span>
+                    </>
+                  )}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {eventTypeStats.seminars} seminars • {eventTypeStats.workshops} workshops
                 </div>
               </div>
               <div className="bg-blue-100 p-3 rounded-lg">
@@ -281,6 +350,9 @@ export default async function DashboardPage() {
                   <TrendingUp className="h-4 w-4 mr-1" />
                   Registered users
                 </p>
+                <div className="text-xs text-gray-500 mt-1">
+                  Seminars: {eventTypeStats.seminarParticipants} • Workshops: {eventTypeStats.workshopParticipants}
+                </div>
               </div>
               <div className="bg-green-100 p-3 rounded-lg">
                 <Users className="h-6 w-6 text-green-600" />
@@ -298,6 +370,12 @@ export default async function DashboardPage() {
                   <span className="text-sm text-gray-400">•</span>
                   <span className="text-sm text-purple-600">{stats.registrationRate}% filled</span>
                 </div>
+                <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
+                  <div 
+                    className="bg-purple-600 h-1.5 rounded-full transition-all duration-300" 
+                    style={{ width: `${stats.registrationRate}%` }}
+                  ></div>
+                </div>
               </div>
               <div className="bg-orange-100 p-3 rounded-lg">
                 <Ticket className="h-6 w-6 text-orange-600" />
@@ -314,6 +392,12 @@ export default async function DashboardPage() {
                   <Award className="h-4 w-4 mr-1" />
                   {stats.totalCertificates - stats.sentCertificates} pending
                 </p>
+                <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
+                  <div 
+                    className="bg-purple-600 h-1.5 rounded-full transition-all duration-300" 
+                    style={{ width: `${stats.totalCertificates > 0 ? (stats.sentCertificates / stats.totalCertificates) * 100 : 0}%` }}
+                  ></div>
+                </div>
               </div>
               <div className="bg-purple-100 p-3 rounded-lg">
                 <Award className="h-6 w-6 text-purple-600" />
@@ -328,24 +412,36 @@ export default async function DashboardPage() {
             <Calendar className="h-8 w-8 mb-3" />
             <h3 className="text-lg font-semibold mb-2">Manage Events</h3>
             <p className="text-blue-100 text-sm">Create, edit, and view all events</p>
+            <div className="mt-3 text-blue-200 text-xs">
+              {stats.totalEvents} total events
+            </div>
           </Link>
 
           <Link href="/dashboard/participants" className="bg-gradient-to-r from-green-500 to-green-600 p-6 rounded-xl text-white hover:from-green-600 hover:to-green-700 transition-all transform hover:scale-105">
             <Users className="h-8 w-8 mb-3" />
             <h3 className="text-lg font-semibold mb-2">Participants</h3>
             <p className="text-green-100 text-sm">View and manage participants</p>
+            <div className="mt-3 text-green-200 text-xs">
+              {stats.totalParticipants} registered
+            </div>
           </Link>
 
           <Link href="/dashboard/certificates" className="bg-gradient-to-r from-purple-500 to-purple-600 p-6 rounded-xl text-white hover:from-purple-600 hover:to-purple-700 transition-all transform hover:scale-105">
             <Award className="h-8 w-8 mb-3" />
             <h3 className="text-lg font-semibold mb-2">Certificates</h3>
             <p className="text-purple-100 text-sm">Generate and manage certificates</p>
+            <div className="mt-3 text-purple-200 text-xs">
+              {stats.sentCertificates}/{stats.totalCertificates} sent
+            </div>
           </Link>
 
           <Link href="/dashboard/reports" className="bg-gradient-to-r from-orange-500 to-orange-600 p-6 rounded-xl text-white hover:from-orange-600 hover:to-orange-700 transition-all transform hover:scale-105">
             <BarChart3 className="h-8 w-8 mb-3" />
             <h3 className="text-lg font-semibold mb-2">Reports</h3>
             <p className="text-orange-100 text-sm">View analytics and reports</p>
+            <div className="mt-3 text-orange-200 text-xs">
+              {stats.registrationRate}% avg. fill rate
+            </div>
           </Link>
         </div>
 
@@ -469,17 +565,23 @@ export default async function DashboardPage() {
                         {activity.participant_name}
                       </p>
                       <p className="text-xs text-gray-500 truncate">
-                        Registered for {activity.event_name}
+                        {activity.organization && `${activity.organization} • `}
+                        {activity.event_name}
                       </p>
                       <p className="text-xs text-gray-400">
                         {formatDateTime(activity.registered_at)}
                       </p>
                     </div>
-                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                      activity.event_type === 'Seminar' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'
-                    }`}>
-                      {activity.event_type}
-                    </span>
+                    <div className="flex flex-col items-end space-y-1">
+                      <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                        activity.event_type === 'Seminar' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'
+                      }`}>
+                        {activity.event_type}
+                      </span>
+                      {new Date(activity.start_time) > new Date() && (
+                        <span className="text-xs text-green-600 font-medium">Upcoming</span>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

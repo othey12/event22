@@ -8,7 +8,6 @@ const dbConfig: mysql.PoolOptions = {
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
-  acquireTimeout: 60000,
   timeout: 60000,
   charset: 'utf8mb4'
 };
