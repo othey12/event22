@@ -1,11 +1,11 @@
 import Link from 'next/link'
-import { Calendar, Users, Award, BarChart3, Plus, Eye, Ticket } from 'lucide-react'
+import { Calendar, Users, Award, BarChart3, Plus, Eye, Ticket, TrendingUp, Clock, MapPin } from 'lucide-react'
 import db, { testConnection } from '@/lib/db'
 import { formatDateTime } from '@/lib/utils'
 
 async function getDashboardStats() {
   try {
-    console.log('🔍 Starting dashboard stats fetch...');
+    console.log('🔍 Starting comprehensive dashboard stats fetch...');
     
     // Test database connection first
     const isConnected = await testConnection()
@@ -16,25 +16,61 @@ async function getDashboardStats() {
         totalParticipants: 0,  
         totalTickets: 0,
         verifiedTickets: 0,
+        availableTickets: 0,
+        registrationRate: 0,
+        upcomingEvents: 0,
+        pastEvents: 0,
+        totalCertificates: 0,
+        sentCertificates: 0,
       }
     }
 
-    console.log('🔍 Fetching dashboard statistics...');
+    console.log('🔍 Fetching comprehensive dashboard statistics...');
 
-    // Get comprehensive statistics with proper error handling
-    const [eventsResult] = await db.execute('SELECT COUNT(*) as count FROM events');
-    const [participantsResult] = await db.execute('SELECT COUNT(*) as count FROM participants');
-    const [ticketsResult] = await db.execute('SELECT COUNT(*) as count FROM tickets');
-    const [verifiedResult] = await db.execute('SELECT COUNT(*) as count FROM tickets WHERE is_verified = TRUE');
+    // Get all statistics in parallel for better performance
+    const [
+      eventsResult,
+      participantsResult,
+      ticketsResult,
+      verifiedResult,
+      upcomingEventsResult,
+      pastEventsResult,
+      certificatesResult,
+      sentCertificatesResult
+    ] = await Promise.all([
+      db.execute('SELECT COUNT(*) as count FROM events'),
+      db.execute('SELECT COUNT(*) as count FROM participants'),
+      db.execute('SELECT COUNT(*) as count FROM tickets'),
+      db.execute('SELECT COUNT(*) as count FROM tickets WHERE is_verified = TRUE'),
+      db.execute('SELECT COUNT(*) as count FROM events WHERE start_time > NOW()'),
+      db.execute('SELECT COUNT(*) as count FROM events WHERE end_time < NOW()'),
+      db.execute('SELECT COUNT(*) as count FROM certificates'),
+      db.execute('SELECT COUNT(*) as count FROM certificates WHERE sent = TRUE')
+    ]);
     
+    const totalEvents = Number((eventsResult[0] as any)[0].count) || 0;
+    const totalParticipants = Number((participantsResult[0] as any)[0].count) || 0;
+    const totalTickets = Number((ticketsResult[0] as any)[0].count) || 0;
+    const verifiedTickets = Number((verifiedResult[0] as any)[0].count) || 0;
+    const upcomingEvents = Number((upcomingEventsResult[0] as any)[0].count) || 0;
+    const pastEvents = Number((pastEventsResult[0] as any)[0].count) || 0;
+    const totalCertificates = Number((certificatesResult[0] as any)[0].count) || 0;
+    const sentCertificates = Number((sentCertificatesResult[0] as any)[0].count) || 0;
+
     const stats = {
-      totalEvents: Number((eventsResult as any)[0].count) || 0,
-      totalParticipants: Number((participantsResult as any)[0].count) || 0,
-      totalTickets: Number((ticketsResult as any)[0].count) || 0,
-      verifiedTickets: Number((verifiedResult as any)[0].count) || 0,
+      totalEvents,
+      totalParticipants,
+      totalTickets,
+      verifiedTickets,
+      availableTickets: totalTickets - verifiedTickets,
+      registrationRate: totalTickets > 0 ? Math.round((verifiedTickets / totalTickets) * 100) : 0,
+      upcomingEvents,
+      pastEvents,
+      totalCertificates,
+      sentCertificates,
     }
 
-    console.log('📊 Dashboard stats fetched successfully:', stats);
+    console.log('📊 Comprehensive dashboard stats fetched successfully:', stats);
     return stats;
   } catch (error) {
     console.error('❌ Error fetching dashboard stats:', error);
@@ -43,13 +79,19 @@ async function getDashboardStats() {
       totalParticipants: 0,  
       totalTickets: 0,
       verifiedTickets: 0,
+      availableTickets: 0,
+      registrationRate: 0,
+      upcomingEvents: 0,
+      pastEvents: 0,
+      totalCertificates: 0,
+      sentCertificates: 0,
     }
   }
 }
 
 async function getRecentEvents() {
   try {
-    console.log('🔍 Starting events fetch...');
+    console.log('🔍 Starting comprehensive events fetch...');
     
     // Test database connection first
     const isConnected = await testConnection()
@@ -58,9 +100,9 @@ async function getRecentEvents() {
       return []
     }
 
-    console.log('🔍 Fetching recent events...');
+    console.log('🔍 Fetching events with complete statistics and status...');
 
-    // Enhanced query to get events with complete statistics
+    // Enhanced query to get events with complete statistics and status
     const [eventRows] = await db.execute(`
       SELECT 
         e.id, e.name, e.slug, e.type, e.location, e.description, 
@@ -69,7 +111,14 @@ async function getRecentEvents() {
         e.created_at, e.updated_at,
         COALESCE(ticket_stats.total_tickets, 0) as total_tickets,
         COALESCE(ticket_stats.verified_tickets, 0) as verified_tickets,
-        COALESCE(ticket_stats.available_tickets, 0) as available_tickets
+        COALESCE(ticket_stats.available_tickets, 0) as available_tickets,
+        CASE 
+          WHEN e.start_time > NOW() THEN 'upcoming'
+          WHEN e.start_time <= NOW() AND e.end_time >= NOW() THEN 'ongoing'
+          ELSE 'completed'
+        END as event_status,
+        DATEDIFF(e.start_time, NOW()) as days_until_start,
+        COALESCE(participant_stats.participant_count, 0) as participant_count
       FROM events e
       LEFT JOIN (
         SELECT 
@@ -80,39 +129,97 @@ async function getRecentEvents() {
         FROM tickets 
         GROUP BY event_id
       ) ticket_stats ON e.id = ticket_stats.event_id
-      ORDER BY e.created_at DESC
+      LEFT JOIN (
+        SELECT 
+          t.event_id,
+          COUNT(p.id) as participant_count
+        FROM tickets t
+        LEFT JOIN participants p ON t.id = p.ticket_id
+        GROUP BY t.event_id
+      ) participant_stats ON e.id = participant_stats.event_id
+      ORDER BY 
+        CASE 
+          WHEN e.start_time > NOW() THEN 1
+          WHEN e.start_time <= NOW() AND e.end_time >= NOW() THEN 2
+          ELSE 3
+        END,
+        e.start_time ASC
     `);
     
     const events = eventRows as any[];
-    console.log(`📊 Found ${events.length} events with complete statistics`);
+    console.log(`📊 Found ${events.length} events with complete statistics and status`);
     
     // Log sample event for debugging
     if (events.length > 0) {
       console.log('📝 Sample event data:', {
         id: events[0].id,
         name: events[0].name,
+        status: events[0].event_status,
         total_tickets: events[0].total_tickets,
         verified_tickets: events[0].verified_tickets,
+        participant_count: events[0].participant_count,
+        days_until_start: events[0].days_until_start,
         ticket_design: events[0].ticket_design
       });
     }
     
     return events;
   } catch (error) {
-    console.error('❌ Error fetching recent events:', error);
+    console.error('❌ Error fetching events:', error);
+    return [];
+  }
+}
+
+async function getRecentActivity() {
+  try {
+    console.log('🔍 Fetching recent activity...');
+    
+    const isConnected = await testConnection()
+    if (!isConnected) {
+      console.error('❌ Database connection failed in getRecentActivity')
+      return []
+    }
+
+    // Get recent registrations with event details
+    const [activityRows] = await db.execute(`
+      SELECT 
+        p.id,
+        p.name as participant_name,
+        p.email,
+        p.registered_at,
+        e.name as event_name,
+        e.type as event_type,
+        'registration' as activity_type
+      FROM participants p
+      JOIN tickets t ON p.ticket_id = t.id
+      JOIN events e ON t.event_id = e.id
+      ORDER BY p.registered_at DESC
+      LIMIT 10
+    `);
+    
+    const activities = activityRows as any[];
+    console.log(`📊 Found ${activities.length} recent activities`);
+    
+    return activities;
+  } catch (error) {
+    console.error('❌ Error fetching recent activity:', error);
     return [];
   }
 }
 
 export default async function DashboardPage() {
-  console.log('🚀 Loading dashboard page...');
+  console.log('🚀 Loading enhanced dashboard page...');
   
-  const stats = await getDashboardStats();
-  const recentEvents = await getRecentEvents();
+  const [stats, recentEvents, recentActivity] = await Promise.all([
+    getDashboardStats(),
+    getRecentEvents(),
+    getRecentActivity()
+  ]);
 
-  console.log('📊 Final dashboard data:', {
+  console.log('📊 Final enhanced dashboard data:', {
     stats,
-    eventsCount: recentEvents.length
+    eventsCount: recentEvents.length,
+    activitiesCount: recentActivity.length
   });
 
   return (
@@ -143,17 +250,21 @@ export default async function DashboardPage() {
         {/* Page Title */}
         <div className="mb-8">
           <h2 className="text-3xl font-bold text-gray-900 mb-2">Dashboard</h2>
-          <p className="text-gray-600">Manage your events and track performance</p>
+          <p className="text-gray-600">Comprehensive overview of your event management system</p>
         </div>
 
-        {/* Stats Cards */}
+        {/* Enhanced Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100 hover:shadow-xl transition-all">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-gray-500 text-sm font-medium">Total Events</p>
                 <p className="text-3xl font-bold text-gray-900">{stats.totalEvents}</p>
-                <p className="text-sm text-blue-600 mt-1">All created events</p>
+                <div className="flex items-center space-x-2 mt-1">
+                  <span className="text-sm text-green-600">{stats.upcomingEvents} upcoming</span>
+                  <span className="text-sm text-gray-400">•</span>
+                  <span className="text-sm text-blue-600">{stats.pastEvents} completed</span>
+                </div>
               </div>
               <div className="bg-blue-100 p-3 rounded-lg">
                 <Calendar className="h-6 w-6 text-blue-600" />
@@ -166,7 +277,10 @@ export default async function DashboardPage() {
               <div>
                 <p className="text-gray-500 text-sm font-medium">Total Participants</p>
                 <p className="text-3xl font-bold text-gray-900">{stats.totalParticipants}</p>
-                <p className="text-sm text-green-600 mt-1">Registered users</p>
+                <p className="text-sm text-green-600 mt-1 flex items-center">
+                  <TrendingUp className="h-4 w-4 mr-1" />
+                  Registered users
+                </p>
               </div>
               <div className="bg-green-100 p-3 rounded-lg">
                 <Users className="h-6 w-6 text-green-600" />
@@ -177,9 +291,13 @@ export default async function DashboardPage() {
           <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100 hover:shadow-xl transition-all">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-gray-500 text-sm font-medium">Total Tickets</p>
-                <p className="text-3xl font-bold text-gray-900">{stats.totalTickets}</p>
-                <p className="text-sm text-orange-600 mt-1">Generated tickets</p>
+                <p className="text-gray-500 text-sm font-medium">Ticket Status</p>
+                <p className="text-3xl font-bold text-gray-900">{stats.verifiedTickets}/{stats.totalTickets}</p>
+                <div className="flex items-center space-x-2 mt-1">
+                  <span className="text-sm text-orange-600">{stats.availableTickets} available</span>
+                  <span className="text-sm text-gray-400">•</span>
+                  <span className="text-sm text-purple-600">{stats.registrationRate}% filled</span>
+                </div>
               </div>
               <div className="bg-orange-100 p-3 rounded-lg">
                 <Ticket className="h-6 w-6 text-orange-600" />
@@ -190,9 +308,12 @@ export default async function DashboardPage() {
           <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100 hover:shadow-xl transition-all">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-gray-500 text-sm font-medium">Verified Tickets</p>
-                <p className="text-3xl font-bold text-gray-900">{stats.verifiedTickets}</p>
-                <p className="text-sm text-purple-600 mt-1">Used tickets</p>
+                <p className="text-gray-500 text-sm font-medium">Certificates</p>
+                <p className="text-3xl font-bold text-gray-900">{stats.sentCertificates}/{stats.totalCertificates}</p>
+                <p className="text-sm text-purple-600 mt-1 flex items-center">
+                  <Award className="h-4 w-4 mr-1" />
+                  {stats.totalCertificates - stats.sentCertificates} pending
+                </p>
               </div>
               <div className="bg-purple-100 p-3 rounded-lg">
                 <Award className="h-6 w-6 text-purple-600" />
@@ -228,67 +349,147 @@ export default async function DashboardPage() {
           </Link>
         </div>
 
-        {/* All Events */}
-        <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-semibold text-gray-900">All Events ({recentEvents.length})</h3>
-            <Link href="/dashboard/events" className="text-blue-600 hover:text-blue-700 font-medium flex items-center space-x-1">
-              <span>Manage All</span>
-              <Eye className="h-4 w-4" />
-            </Link>
-          </div>
-
-          {recentEvents.length > 0 ? (
-            <div className="space-y-4">
-              {recentEvents.map((event) => (
-                <div key={event.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
-                  <div className="flex items-center space-x-4">
-                    <div className={`p-2 rounded-lg ${event.type === 'Seminar' ? 'bg-blue-100' : 'bg-green-100'}`}>
-                      <Calendar className={`h-5 w-5 ${event.type === 'Seminar' ? 'text-blue-600' : 'text-green-600'}`} />
-                    </div>
-                    {event.ticket_design && (
-                      <img 
-                        src={event.ticket_design} 
-                        alt="Ticket Design" 
-                        className="w-12 h-8 object-cover rounded border border-gray-200"
-                        onError={(e) => {
-                          console.log('Image failed to load:', event.ticket_design)
-                          e.currentTarget.style.display = 'none'
-                        }}
-                      />
-                    )}
-                    <div>
-                      <h4 className="font-semibold text-gray-900">{event.name}</h4>
-                      <p className="text-sm text-gray-500">{event.type} • {event.location}</p>
-                      <p className="text-xs text-gray-400">{formatDateTime(event.start_time)}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-gray-900">
-                      {event.verified_tickets || 0}/{event.total_tickets || 0} Registered
-                    </p>
-                    <div className="w-24 bg-gray-200 rounded-full h-2 mt-1">
-                      <div 
-                        className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
-                        style={{ width: `${Math.round(((event.verified_tickets || 0) / Math.max(event.total_tickets || 1, 1)) * 100)}%` }}
-                      ></div>
-                    </div>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {Math.round(((event.verified_tickets || 0) / Math.max(event.total_tickets || 1, 1)) * 100)}% filled
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-12">
-              <Calendar className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-500">No events created yet</p>
-              <Link href="/dashboard/events/create" className="text-blue-600 hover:text-blue-700 font-medium">
-                Create your first event
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* All Events - Enhanced */}
+          <div className="lg:col-span-2 bg-white rounded-xl shadow-lg border border-gray-100 p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold text-gray-900">All Events ({recentEvents.length})</h3>
+              <Link href="/dashboard/events" className="text-blue-600 hover:text-blue-700 font-medium flex items-center space-x-1">
+                <span>Manage All</span>
+                <Eye className="h-4 w-4" />
               </Link>
             </div>
-          )}
+
+            {recentEvents.length > 0 ? (
+              <div className="space-y-4">
+                {recentEvents.map((event) => (
+                  <div key={event.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                    <div className="flex items-center space-x-4">
+                      <div className={`p-2 rounded-lg ${
+                        event.event_status === 'upcoming' ? 'bg-green-100' :
+                        event.event_status === 'ongoing' ? 'bg-yellow-100' : 'bg-gray-100'
+                      }`}>
+                        <Calendar className={`h-5 w-5 ${
+                          event.event_status === 'upcoming' ? 'text-green-600' :
+                          event.event_status === 'ongoing' ? 'text-yellow-600' : 'text-gray-600'
+                        }`} />
+                      </div>
+                      {event.ticket_design && (
+                        <img 
+                          src={event.ticket_design} 
+                          alt="Ticket Design" 
+                          className="w-12 h-8 object-cover rounded border border-gray-200"
+                          onError={(e) => {
+                            console.log('Image failed to load:', event.ticket_design)
+                            e.currentTarget.style.display = 'none'
+                          }}
+                        />
+                      )}
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2 mb-1">
+                          <h4 className="font-semibold text-gray-900">{event.name}</h4>
+                          <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                            event.event_status === 'upcoming' ? 'bg-green-100 text-green-800' :
+                            event.event_status === 'ongoing' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'
+                          }`}>
+                            {event.event_status}
+                          </span>
+                          <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                            event.type === 'Seminar' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'
+                          }`}>
+                            {event.type}
+                          </span>
+                        </div>
+                        <div className="flex items-center space-x-4 text-sm text-gray-500">
+                          <div className="flex items-center space-x-1">
+                            <MapPin className="h-3 w-3" />
+                            <span>{event.location}</span>
+                          </div>
+                          <div className="flex items-center space-x-1">
+                            <Clock className="h-3 w-3" />
+                            <span>{formatDateTime(event.start_time)}</span>
+                          </div>
+                          {event.event_status === 'upcoming' && event.days_until_start !== null && (
+                            <span className="text-green-600 font-medium">
+                              {event.days_until_start > 0 ? `${event.days_until_start} days left` : 'Starting today'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-medium text-gray-900">
+                        {event.verified_tickets || 0}/{event.total_tickets || 0} Registered
+                      </p>
+                      <p className="text-xs text-gray-500 mb-2">
+                        {event.participant_count || 0} participants
+                      </p>
+                      <div className="w-24 bg-gray-200 rounded-full h-2">
+                        <div 
+                          className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                          style={{ width: `${Math.round(((event.verified_tickets || 0) / Math.max(event.total_tickets || 1, 1)) * 100)}%` }}
+                        ></div>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {Math.round(((event.verified_tickets || 0) / Math.max(event.total_tickets || 1, 1)) * 100)}% filled
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12">
+                <Calendar className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-500">No events created yet</p>
+                <Link href="/dashboard/events/create" className="text-blue-600 hover:text-blue-700 font-medium">
+                  Create your first event
+                </Link>
+              </div>
+            )}
+          </div>
+
+          {/* Recent Activity */}
+          <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold text-gray-900">Recent Activity</h3>
+              <Link href="/dashboard/participants" className="text-blue-600 hover:text-blue-700 text-sm font-medium">
+                View All
+              </Link>
+            </div>
+
+            {recentActivity.length > 0 ? (
+              <div className="space-y-4">
+                {recentActivity.map((activity) => (
+                  <div key={activity.id} className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg">
+                    <div className="bg-green-100 p-2 rounded-full">
+                      <Users className="h-4 w-4 text-green-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">
+                        {activity.participant_name}
+                      </p>
+                      <p className="text-xs text-gray-500 truncate">
+                        Registered for {activity.event_name}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        {formatDateTime(activity.registered_at)}
+                      </p>
+                    </div>
+                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                      activity.event_type === 'Seminar' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'
+                    }`}>
+                      {activity.event_type}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <Users className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+                <p className="text-gray-500 text-sm">No recent activity</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
