@@ -1,13 +1,6 @@
 import mysql from 'mysql2/promise';
 
-interface DBConfig extends mysql.PoolOptions {
-  host: string;
-  user: string;
-  password: string;
-  database: string;
-}
-
-const dbConfig: DBConfig = {
+const dbConfig: mysql.PoolOptions = {
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || 'bismillah123',
@@ -15,7 +8,6 @@ const dbConfig: DBConfig = {
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
-  connectTimeout: 60000,
   acquireTimeout: 60000,
   timeout: 60000,
   charset: 'utf8mb4'
