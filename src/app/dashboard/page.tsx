@@ -221,7 +221,12 @@ async function getEventTypeStats() {
     
     const isConnected = await testConnection()
     if (!isConnected) {
-      return { seminars: 0, workshops: 0 }
+      return { 
+        seminars: 0, 
+        workshops: 0,
+        seminarParticipants: 0,
+        workshopParticipants: 0 
+      }
     }
 
     const [typeStats] = await db.execute(`
@@ -241,7 +246,12 @@ async function getEventTypeStats() {
     `);
     
     const stats = typeStats as any[];
-    const result = { seminars: 0, workshops: 0, seminarParticipants: 0, workshopParticipants: 0 };
+    const result = { 
+      seminars: 0, 
+      workshops: 0, 
+      seminarParticipants: 0, 
+      workshopParticipants: 0 
+    };
     
     stats.forEach(stat => {
       if (stat.type === 'Seminar') {
@@ -257,7 +267,12 @@ async function getEventTypeStats() {
     return result;
   } catch (error) {
     console.error('❌ Error fetching event type stats:', error);
-    return { seminars: 0, workshops: 0, seminarParticipants: 0, workshopParticipants: 0 };
+    return { 
+      seminars: 0, 
+      workshops: 0, 
+      seminarParticipants: 0, 
+      workshopParticipants: 0 
+    };
   }
 }
 
@@ -597,3 +612,6 @@ export default async function DashboardPage() {
     </div>
   )
 }
+
+// Explicitly mark this file as a module
+export {};
