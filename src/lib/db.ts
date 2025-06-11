@@ -5,20 +5,31 @@ const dbConfig: mysql.PoolOptions = {
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || 'bismillah123',
   database: process.env.DB_NAME || 'event_management',
+  port: parseInt(process.env.DB_PORT || '3306'),
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
-  connectTimeout: 60000, // Changed from timeout to connectTimeout
+  connectTimeout: 60000,
+  acquireTimeout: 60000,
+  timeout: 40000,
   charset: 'utf8mb4',
-  enableKeepAlive: true, // Added recommended keepalive option
-  keepAliveInitialDelay: 10000 // Added keepalive delay
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 10000,
+  // Add retry logic
+  reconnect: true,
+  idleTimeout: 300000,
+  // SSL configuration for production
+  ssl: process.env.NODE_ENV === 'production' ? {
+    rejectUnauthorized: false
+  } : false
 };
 
 console.log('🔧 Database Configuration:', {
   host: dbConfig.host,
   user: dbConfig.user,
   database: dbConfig.database,
-  port: dbConfig.port || 3306
+  port: dbConfig.port || 3306,
+  environment: process.env.NODE_ENV || 'development'
 });
 
 const pool = mysql.createPool(dbConfig);
@@ -35,7 +46,18 @@ export async function testConnection(): Promise<boolean> {
     const [tables] = await connection.execute(
       "SHOW TABLES FROM " + dbConfig.database
     );
-    console.log('📋 Available tables:', (tables as any[]).map(t => Object.values(t)[0]));
+    const tableList = (tables as any[]).map(t => Object.values(t)[0]);
+    console.log('📋 Available tables:', tableList);
+    
+    // Verify essential tables exist
+    const requiredTables = ['events', 'tickets', 'participants', 'certificates'];
+    const missingTables = requiredTables.filter(table => !tableList.includes(table));
+    
+    if (missingTables.length > 0) {
+      console.error('❌ Missing required tables:', missingTables);
+      console.log('💡 Please run the database initialization script (init.sql)');
+      return false;
+    }
     
     return true;
   } catch (error: unknown) {
@@ -44,8 +66,18 @@ export async function testConnection(): Promise<boolean> {
       console.error('🔧 Connection details:', {
         host: dbConfig.host,
         user: dbConfig.user,
-        database: dbConfig.database
+        database: dbConfig.database,
+        port: dbConfig.port
       });
+      
+      // Provide helpful error messages
+      if (error.message.includes('ECONNREFUSED')) {
+        console.error('💡 Solution: Make sure MySQL server is running');
+      } else if (error.message.includes('Access denied')) {
+        console.error('💡 Solution: Check your database credentials in .env file');
+      } else if (error.message.includes('Unknown database')) {
+        console.error('💡 Solution: Create the database or run the init.sql script');
+      }
     } else {
       console.error('❌ Unknown database connection error occurred');
     }
@@ -71,6 +103,7 @@ export async function initializeDatabase(): Promise<boolean> {
     
     if (tables.length === 0) {
       console.log('⚠️ Events table not found, please ensure database is initialized');
+      console.log('💡 Run: docker-compose up -d to start the database with init.sql');
       return false;
     } else {
       console.log('✅ Database tables exist');
@@ -110,10 +143,12 @@ export async function initializeDatabase(): Promise<boolean> {
   }
 }
 
-// Test connection immediately
+// Test connection immediately when module loads
 testConnection().then(isConnected => {
   if (isConnected) {
     initializeDatabase();
+  } else {
+    console.log('🔄 Database connection failed. Please check your configuration and try again.');
   }
 });
 

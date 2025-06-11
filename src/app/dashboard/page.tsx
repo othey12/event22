@@ -23,6 +23,7 @@ async function getDashboardStats() {
         ongoingEvents: 0,
         totalCertificates: 0,
         sentCertificates: 0,
+        error: 'Database connection failed'
       }
     }
 
@@ -91,6 +92,7 @@ async function getDashboardStats() {
       ongoingEvents: 0,
       totalCertificates: 0,
       sentCertificates: 0,
+      error: error instanceof Error ? error.message : 'Unknown error'
     }
   }
 }
@@ -293,6 +295,9 @@ export default async function DashboardPage() {
     eventTypeStats
   });
 
+  // Show database connection error if exists
+  const hasDbError = 'error' in stats;
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
       {/* Header */}
@@ -322,6 +327,25 @@ export default async function DashboardPage() {
         <div className="mb-8">
           <h2 className="text-3xl font-bold text-gray-900 mb-2">Dashboard</h2>
           <p className="text-gray-600">Comprehensive overview of your event management system</p>
+          {hasDbError && (
+            <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+              <div className="flex items-center space-x-2">
+                <AlertCircle className="h-5 w-5 text-red-500" />
+                <p className="text-red-700 font-medium">Database Connection Error</p>
+              </div>
+              <p className="text-red-600 text-sm mt-1">
+                {(stats as any).error}. Please check your database configuration and ensure MySQL is running.
+              </p>
+              <div className="mt-2 text-sm text-red-600">
+                <p>💡 Solutions:</p>
+                <ul className="list-disc list-inside ml-4 space-y-1">
+                  <li>Run <code className="bg-red-100 px-1 rounded">docker-compose up -d</code> to start the database</li>
+                  <li>Check your .env file for correct database credentials</li>
+                  <li>Ensure MySQL server is running on port 3306</li>
+                </ul>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Enhanced Stats Cards */}
