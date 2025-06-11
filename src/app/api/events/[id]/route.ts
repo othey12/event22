@@ -19,18 +19,20 @@ export async function GET(
     // Get event details with statistics
     const [eventRows] = await db.execute(`
       SELECT e.*, 
-             COALESCE(t.total_tickets, 0) as total_tickets,
-             COALESCE(t.verified_tickets, 0) as verified_tickets
+             COALESCE(ticket_stats.total_tickets, 0) as total_tickets,
+             COALESCE(ticket_stats.verified_tickets, 0) as verified_tickets,
+             COALESCE(ticket_stats.available_tickets, 0) as available_tickets
       FROM events e
       LEFT JOIN (
         SELECT 
           event_id,
           COUNT(*) as total_tickets,
-          SUM(CASE WHEN is_verified = TRUE THEN 1 ELSE 0 END) as verified_tickets
+          SUM(CASE WHEN is_verified = TRUE THEN 1 ELSE 0 END) as verified_tickets,
+          SUM(CASE WHEN is_verified = FALSE THEN 1 ELSE 0 END) as available_tickets
         FROM tickets 
         WHERE event_id = ?
         GROUP BY event_id
-      ) t ON e.id = t.event_id
+      ) ticket_stats ON e.id = ticket_stats.event_id
       WHERE e.id = ?
     `, [eventId, eventId])
 
@@ -129,18 +131,19 @@ export async function PUT(
           console.log('✅ Created uploads directory');
         }
         
-        // Generate unique filename
+        // Generate unique filename with timestamp and random string
         const timestamp = Date.now()
+        const randomString = Math.random().toString(36).substring(2, 8)
         const fileExtension = path.extname(ticketDesignFile.name)
         const baseFileName = ticketDesignFile.name
           .replace(fileExtension, '')
           .replace(/[^a-zA-Z0-9.-]/g, '-')
           .toLowerCase()
-        const filename = `ticket-${timestamp}-${baseFileName}${fileExtension}`
+        const filename = `ticket-${timestamp}-${randomString}-${baseFileName}${fileExtension}`
         const filepath = path.join(uploadsDir, filename)
         
-        // Write file
-        await writeFile(filepath, buffer)
+        // Write file with proper permissions
+        await writeFile(filepath, buffer, { mode: 0o644 })
         console.log('✅ File saved to:', filepath)
         
         // Verify file was written and get stats

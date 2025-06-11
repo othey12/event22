@@ -82,20 +82,21 @@ export async function POST(request: NextRequest) {
           console.log('✅ Created uploads directory');
         }
         
-        // Generate unique filename
+        // Generate unique filename with timestamp and random string
         const timestamp = Date.now()
+        const randomString = Math.random().toString(36).substring(2, 8)
         const fileExtension = path.extname(ticketDesignFile.name)
         const baseFileName = ticketDesignFile.name
           .replace(fileExtension, '')
           .replace(/[^a-zA-Z0-9.-]/g, '-')
           .toLowerCase()
-        const filename = `ticket-${timestamp}-${baseFileName}${fileExtension}`
+        const filename = `ticket-${timestamp}-${randomString}-${baseFileName}${fileExtension}`
         const filepath = path.join(uploadsDir, filename)
         
         console.log('💾 Saving file to:', filepath);
         
-        // Write file
-        await writeFile(filepath, buffer)
+        // Write file with proper error handling
+        await writeFile(filepath, buffer, { mode: 0o644 })
         console.log('✅ File written successfully');
         
         // Verify file exists and get stats
@@ -224,24 +225,26 @@ export async function GET() {
 
     console.log('🔍 Fetching all events with statistics...');
 
-    // Simple query to get events with ticket statistics
+    // Enhanced query to get events with ticket statistics
     const [rows] = await db.execute(`
       SELECT 
         e.id, e.name, e.slug, e.type, e.location, e.description, 
         e.start_time, e.end_time, e.quota, e.ticket_design, 
         e.ticket_design_size, e.ticket_design_type, 
         e.created_at, e.updated_at,
-        COALESCE(t.total_tickets, 0) as total_tickets,
-        COALESCE(t.verified_tickets, 0) as verified_tickets
+        COALESCE(ticket_stats.total_tickets, 0) as total_tickets,
+        COALESCE(ticket_stats.verified_tickets, 0) as verified_tickets,
+        COALESCE(ticket_stats.available_tickets, 0) as available_tickets
       FROM events e
       LEFT JOIN (
         SELECT 
           event_id,
           COUNT(*) as total_tickets,
-          SUM(CASE WHEN is_verified = TRUE THEN 1 ELSE 0 END) as verified_tickets
+          SUM(CASE WHEN is_verified = TRUE THEN 1 ELSE 0 END) as verified_tickets,
+          SUM(CASE WHEN is_verified = FALSE THEN 1 ELSE 0 END) as available_tickets
         FROM tickets 
         GROUP BY event_id
-      ) t ON e.id = t.event_id
+      ) ticket_stats ON e.id = ticket_stats.event_id
       ORDER BY e.created_at DESC
     `)
     

@@ -21,7 +21,7 @@ async function getDashboardStats() {
 
     console.log('🔍 Fetching dashboard statistics...');
 
-    // Get counts with individual queries for better reliability
+    // Get comprehensive statistics with proper error handling
     const [eventsResult] = await db.execute('SELECT COUNT(*) as count FROM events');
     const [participantsResult] = await db.execute('SELECT COUNT(*) as count FROM participants');
     const [ticketsResult] = await db.execute('SELECT COUNT(*) as count FROM tickets');
@@ -60,62 +60,44 @@ async function getRecentEvents() {
 
     console.log('🔍 Fetching recent events...');
 
-    // Simple query first to get events
+    // Enhanced query to get events with complete statistics
     const [eventRows] = await db.execute(`
       SELECT 
-        id, name, slug, type, location, description, 
-        start_time, end_time, quota, ticket_design, 
-        ticket_design_size, ticket_design_type, 
-        created_at, updated_at
-      FROM events 
-      ORDER BY created_at DESC
+        e.id, e.name, e.slug, e.type, e.location, e.description, 
+        e.start_time, e.end_time, e.quota, e.ticket_design, 
+        e.ticket_design_size, e.ticket_design_type, 
+        e.created_at, e.updated_at,
+        COALESCE(ticket_stats.total_tickets, 0) as total_tickets,
+        COALESCE(ticket_stats.verified_tickets, 0) as verified_tickets,
+        COALESCE(ticket_stats.available_tickets, 0) as available_tickets
+      FROM events e
+      LEFT JOIN (
+        SELECT 
+          event_id,
+          COUNT(*) as total_tickets,
+          SUM(CASE WHEN is_verified = TRUE THEN 1 ELSE 0 END) as verified_tickets,
+          SUM(CASE WHEN is_verified = FALSE THEN 1 ELSE 0 END) as available_tickets
+        FROM tickets 
+        GROUP BY event_id
+      ) ticket_stats ON e.id = ticket_stats.event_id
+      ORDER BY e.created_at DESC
     `);
     
     const events = eventRows as any[];
-    console.log(`📊 Found ${events.length} events`);
-    
-    // Get ticket statistics for each event
-    const eventsWithStats = await Promise.all(
-      events.map(async (event) => {
-        try {
-          const [ticketStats] = await db.execute(`
-            SELECT 
-              COUNT(*) as total_tickets,
-              SUM(CASE WHEN is_verified = TRUE THEN 1 ELSE 0 END) as verified_tickets
-            FROM tickets 
-            WHERE event_id = ?
-          `, [event.id]);
-          
-          const stats = (ticketStats as any[])[0];
-          
-          return {
-            ...event,
-            total_tickets: Number(stats.total_tickets) || 0,
-            verified_tickets: Number(stats.verified_tickets) || 0
-          };
-        } catch (error) {
-          console.error(`❌ Error fetching stats for event ${event.id}:`, error);
-          return {
-            ...event,
-            total_tickets: 0,
-            verified_tickets: 0
-          };
-        }
-      })
-    );
+    console.log(`📊 Found ${events.length} events with complete statistics`);
     
     // Log sample event for debugging
-    if (eventsWithStats.length > 0) {
+    if (events.length > 0) {
       console.log('📝 Sample event data:', {
-        id: eventsWithStats[0].id,
-        name: eventsWithStats[0].name,
-        total_tickets: eventsWithStats[0].total_tickets,
-        verified_tickets: eventsWithStats[0].verified_tickets,
-        ticket_design: eventsWithStats[0].ticket_design
+        id: events[0].id,
+        name: events[0].name,
+        total_tickets: events[0].total_tickets,
+        verified_tickets: events[0].verified_tickets,
+        ticket_design: events[0].ticket_design
       });
     }
     
-    return eventsWithStats;
+    return events;
   } catch (error) {
     console.error('❌ Error fetching recent events:', error);
     return [];
